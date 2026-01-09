@@ -105,6 +105,21 @@ app.post('/api/scan', async (req, res) => {
       return res.json({ success: false, message: '재고 업데이트 실패', item: item.name });
     }
 
+    // 4. 변경 이력 기록 (inventory_logs)
+    await supabaseRequest('inventory_logs', {
+      method: 'POST',
+      body: JSON.stringify({
+        inventory_id: inventory.id,
+        item_id: item.id,
+        store_id: STORE_ID,
+        quantity_before: currentQty,
+        quantity_after: newQty,
+        change_amount: changeAmount,
+        change_type: mode === 'output' ? 'output' : 'input',
+        notes: `바코드 스캐너 ${mode === 'output' ? '출고' : '입고'}`
+      }),
+    });
+
     res.json({
       success: true,
       item: item.name,
