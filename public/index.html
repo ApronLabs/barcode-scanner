@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>매출지킴이 바코드 스캐너</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #fff;
+    }
+
+    body.output-mode {
+      background: linear-gradient(135deg, #2e1a1a 0%, #3e1616 100%);
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+
+    .header p {
+      color: #888;
+      font-size: 14px;
+    }
+
+    /* 모드 토글 */
+    .mode-toggle {
+      display: flex;
+      background: #252540;
+      border-radius: 16px;
+      padding: 8px;
+      margin-bottom: 24px;
+    }
+
+    body.output-mode .mode-toggle {
+      background: #402525;
+    }
+
+    .mode-btn {
+      flex: 1;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+      background: transparent;
+      color: #666;
+    }
+
+    .mode-btn.active {
+      color: #fff;
+    }
+
+    .mode-btn.input-btn.active {
+      background: linear-gradient(135deg, #065f46 0%, #047857 100%);
+    }
+
+    .mode-btn.output-btn.active {
+      background: linear-gradient(135deg, #991b1b 0%, #b91c1c 100%);
+    }
+
+    .mode-btn:hover:not(.active) {
+      color: #999;
+    }
+
+    .scan-box {
+      background: #252540;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 24px;
+    }
+
+    body.output-mode .scan-box {
+      background: #402525;
+    }
+
+    .input-group {
+      position: relative;
+    }
+
+    .input-group label {
+      display: block;
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .input-group input {
+      width: 100%;
+      padding: 16px 20px;
+      font-size: 24px;
+      border: 2px solid #3a3a5a;
+      border-radius: 12px;
+      background: #1a1a2e;
+      color: #fff;
+      text-align: center;
+      letter-spacing: 4px;
+      transition: border-color 0.2s;
+    }
+
+    body.output-mode .input-group input {
+      background: #2e1a1a;
+      border-color: #5a3a3a;
+    }
+
+    .input-group input:focus {
+      outline: none;
+      border-color: #6366f1;
+    }
+
+    body.output-mode .input-group input:focus {
+      border-color: #ef4444;
+    }
+
+    .input-group input::placeholder {
+      color: #555;
+      letter-spacing: normal;
+    }
+
+    .quantity-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .quantity-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      border: none;
+      background: #3a3a5a;
+      color: #fff;
+      font-size: 24px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    body.output-mode .quantity-btn {
+      background: #5a3a3a;
+    }
+
+    .quantity-btn:hover {
+      background: #4a4a6a;
+    }
+
+    body.output-mode .quantity-btn:hover {
+      background: #6a4a4a;
+    }
+
+    .quantity-display {
+      font-size: 32px;
+      font-weight: bold;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    .result-box {
+      background: #252540;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 24px;
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    body.output-mode .result-box {
+      background: #402525;
+    }
+
+    .result-box.success {
+      background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+    }
+
+    .result-box.success.output {
+      background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+    }
+
+    .result-box.error {
+      background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+    }
+
+    .result-content {
+      text-align: center;
+    }
+
+    .result-content .icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .result-content .item-name {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .result-content .detail {
+      font-size: 18px;
+      color: rgba(255,255,255,0.8);
+    }
+
+    .result-content .message {
+      font-size: 16px;
+      color: rgba(255,255,255,0.7);
+    }
+
+    .waiting {
+      color: #666;
+      font-size: 16px;
+    }
+
+    .history-box {
+      background: #252540;
+      border-radius: 16px;
+      padding: 24px;
+    }
+
+    body.output-mode .history-box {
+      background: #402525;
+    }
+
+    .history-box h3 {
+      font-size: 16px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    .history-list {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #3a3a5a;
+    }
+
+    body.output-mode .history-item {
+      border-bottom-color: #5a3a3a;
+    }
+
+    .history-item:last-child {
+      border-bottom: none;
+    }
+
+    .history-item .name {
+      font-weight: 500;
+    }
+
+    .history-item .qty {
+      font-weight: bold;
+    }
+
+    .history-item .qty.input {
+      color: #22c55e;
+    }
+
+    .history-item .qty.output {
+      color: #ef4444;
+    }
+
+    .history-item .time {
+      font-size: 12px;
+      color: #666;
+    }
+
+    .empty-history {
+      color: #555;
+      text-align: center;
+      padding: 20px;
+    }
+
+    /* 모드 표시 배지 */
+    .mode-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+
+    .mode-badge.input {
+      background: #065f46;
+      color: #fff;
+    }
+
+    .mode-badge.output {
+      background: #991b1b;
+      color: #fff;
+    }
+
+    /* 스캔 효과 애니메이션 */
+    @keyframes scanPulse {
+      0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+      70% { box-shadow: 0 0 0 20px rgba(99, 102, 241, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+
+    @keyframes scanPulseRed {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
+    .scanning {
+      animation: scanPulse 0.5s ease-out;
+    }
+
+    body.output-mode .scanning {
+      animation: scanPulseRed 0.5s ease-out;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📦 매출지킴이</h1>
+      <p>바코드 스캐너 <span class="mode-badge input" id="modeBadge">입고</span></p>
+    </div>
+
+    <!-- 모드 토글 -->
+    <div class="mode-toggle">
+      <button class="mode-btn input-btn active" onclick="setMode('input')">
+        📥 입고
+      </button>
+      <button class="mode-btn output-btn" onclick="setMode('output')">
+        📤 출고
+      </button>
+    </div>
+
+    <div class="scan-box">
+      <div class="input-group">
+        <label id="scanLabel">바코드를 스캔하세요 (입고)</label>
+        <input
+          type="text"
+          id="barcodeInput"
+          placeholder="바코드 대기 중..."
+          autofocus
+        >
+      </div>
+
+      <div class="quantity-row">
+        <button class="quantity-btn" onclick="changeQuantity(-1)">−</button>
+        <div class="quantity-display" id="quantityDisplay">1</div>
+        <button class="quantity-btn" onclick="changeQuantity(1)">+</button>
+      </div>
+    </div>
+
+    <div class="result-box" id="resultBox">
+      <div class="waiting">바코드를 스캔하면 결과가 표시됩니다</div>
+    </div>
+
+    <div class="history-box">
+      <h3>📋 스캔 이력</h3>
+      <div class="history-list" id="historyList">
+        <div class="empty-history">스캔 이력이 없습니다</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const barcodeInput = document.getElementById('barcodeInput');
+    const resultBox = document.getElementById('resultBox');
+    const historyList = document.getElementById('historyList');
+    const quantityDisplay = document.getElementById('quantityDisplay');
+    const modeBadge = document.getElementById('modeBadge');
+    const scanLabel = document.getElementById('scanLabel');
+
+    let quantity = 1;
+    let history = [];
+    let debounceTimer = null;
+    let currentMode = 'input'; // 'input' 또는 'output'
+
+    // 모드 변경
+    function setMode(mode) {
+      currentMode = mode;
+
+      // 버튼 활성화 상태 변경
+      document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelector(`.mode-btn.${mode}-btn`).classList.add('active');
+
+      // 배지 변경
+      modeBadge.textContent = mode === 'input' ? '입고' : '출고';
+      modeBadge.className = `mode-badge ${mode}`;
+
+      // 라벨 변경
+      scanLabel.textContent = mode === 'input' ? '바코드를 스캔하세요 (입고)' : '바코드를 스캔하세요 (출고)';
+
+      // 배경색 변경
+      if (mode === 'output') {
+        document.body.classList.add('output-mode');
+      } else {
+        document.body.classList.remove('output-mode');
+      }
+
+      // 포커스 유지
+      barcodeInput.focus();
+    }
+
+    // 수량 변경
+    function changeQuantity(delta) {
+      quantity = Math.max(1, Math.min(99, quantity + delta));
+      quantityDisplay.textContent = quantity;
+    }
+
+    // 바코드 스캔 처리
+    barcodeInput.addEventListener('input', (e) => {
+      clearTimeout(debounceTimer);
+
+      // 바코드 스캐너는 빠르게 입력 후 Enter 또는 잠시 멈춤
+      debounceTimer = setTimeout(() => {
+        const barcode = e.target.value.trim();
+        if (barcode.length >= 8) { // 최소 바코드 길이
+          processBarcode(barcode);
+        }
+      }, 100);
+    });
+
+    // Enter 키로도 처리
+    barcodeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(debounceTimer);
+        const barcode = e.target.value.trim();
+        if (barcode) {
+          processBarcode(barcode);
+        }
+      }
+    });
+
+    // 바코드 처리
+    async function processBarcode(barcode) {
+      barcodeInput.classList.add('scanning');
+      setTimeout(() => barcodeInput.classList.remove('scanning'), 500);
+
+      try {
+        const response = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ barcode, quantity, mode: currentMode })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showResult('success', result);
+          addToHistory(result);
+          playSound('success');
+        } else {
+          showResult('error', result);
+          playSound('error');
+        }
+      } catch (error) {
+        showResult('error', { message: '서버 연결 오류' });
+        playSound('error');
+      }
+
+      // 입력 초기화
+      barcodeInput.value = '';
+      barcodeInput.focus();
+    }
+
+    // 결과 표시
+    function showResult(type, result) {
+      const isOutput = result.mode === 'output';
+      resultBox.className = `result-box ${type}${isOutput ? ' output' : ''}`;
+
+      if (type === 'success') {
+        const changeText = result.change > 0 ? `+${result.change}` : result.change;
+        const icon = isOutput ? '📤' : '📥';
+        resultBox.innerHTML = `
+          <div class="result-content">
+            <div class="icon">${icon}</div>
+            <div class="item-name">${result.item}</div>
+            <div class="detail">${result.before} → ${result.after} ${result.unit} (${changeText})</div>
+          </div>
+        `;
+      } else {
+        resultBox.innerHTML = `
+          <div class="result-content">
+            <div class="icon">❌</div>
+            <div class="message">${result.message}</div>
+            ${result.barcode ? `<div class="detail" style="margin-top:8px;font-size:14px;color:#999;">바코드: ${result.barcode}</div>` : ''}
+          </div>
+        `;
+      }
+    }
+
+    // 이력 추가
+    function addToHistory(result) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      const changeText = result.change > 0 ? `+${result.change}` : result.change;
+
+      history.unshift({
+        name: result.item,
+        qty: changeText,
+        mode: result.mode,
+        time: timeStr
+      });
+
+      // 최근 10개만 유지
+      history = history.slice(0, 10);
+
+      renderHistory();
+    }
+
+    // 이력 렌더링
+    function renderHistory() {
+      if (history.length === 0) {
+        historyList.innerHTML = '<div class="empty-history">스캔 이력이 없습니다</div>';
+        return;
+      }
+
+      historyList.innerHTML = history.map(item => `
+        <div class="history-item">
+          <div>
+            <div class="name">${item.name}</div>
+            <div class="time">${item.time}</div>
+          </div>
+          <div class="qty ${item.mode}">${item.qty}</div>
+        </div>
+      `).join('');
+    }
+
+    // 사운드 재생
+    function playSound(type) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        if (type === 'success') {
+          oscillator.frequency.value = currentMode === 'output' ? 440 : 880;
+          gainNode.gain.value = 0.1;
+        } else {
+          oscillator.frequency.value = 220;
+          gainNode.gain.value = 0.1;
+        }
+
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.1);
+      } catch (e) {
+        // 사운드 재생 실패 무시
+      }
+    }
+
+    // 포커스 유지
+    document.addEventListener('click', () => {
+      barcodeInput.focus();
+    });
+
+    // 키보드 단축키: Tab으로 모드 전환
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        setMode(currentMode === 'input' ? 'output' : 'input');
+      }
+    });
+
+    // 초기 포커스
+    barcodeInput.focus();
+  </script>
+</body>
+</html>
