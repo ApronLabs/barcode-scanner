@@ -12,6 +12,11 @@ const path = require('path');
 const app = express();
 const PORT = 3333;
 
+// 접두사 설정 (스캐너에서 설정한 접두사)
+const BARCODE_PREFIX = {
+  OUTPUT: '-',  // 출고용 스캐너 접두사
+};
+
 // Supabase 설정
 const SUPABASE_URL = 'https://kjfnhwhgsznhizibxiwj.supabase.co';
 const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqZm5od2hnc3puaGl6aWJ4aXdqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzA3MzE3NiwiZXhwIjoyMDgyNjQ5MTc2fQ.UG-EylX41DLxpzb-fh60Nwm-p9CISzl7t4EKb8RE63s';
@@ -55,10 +60,33 @@ app.get('/api/item/:barcode', async (req, res) => {
   }
 });
 
-// 바코드 스캔 → 재고 업데이트 (입고/출고 모드 지원)
+// 바코드 접두사 파싱 함수
+function parseBarcodePrefix(rawBarcode) {
+  let barcode = rawBarcode;
+  let detectedMode = null;
+  let prefix = null;
+
+  // 출고 접두사 확인 (- 로 시작하면 출고)
+  if (rawBarcode.startsWith(BARCODE_PREFIX.OUTPUT)) {
+    barcode = rawBarcode.slice(BARCODE_PREFIX.OUTPUT.length);
+    detectedMode = 'output';
+    prefix = BARCODE_PREFIX.OUTPUT;
+  }
+  // 접두사 없으면 입고
+
+  return { barcode, detectedMode, prefix };
+}
+
+// 바코드 스캔 → 재고 업데이트 (입고/출고 모드 지원, 접두사 자동 인식)
 app.post('/api/scan', async (req, res) => {
   try {
-    const { barcode, quantity = 1, mode = 'input' } = req.body;
+    const { barcode: rawBarcode, quantity = 1, mode: requestedMode = 'input' } = req.body;
+
+    // 접두사 파싱 (자동 모드 감지)
+    const { barcode, detectedMode, prefix } = parseBarcodePrefix(rawBarcode);
+
+    // 접두사로 감지된 모드가 있으면 우선 사용, 없으면 요청된 모드 사용
+    const mode = detectedMode || requestedMode;
 
     // 1. 바코드로 품목 조회
     const items = await supabaseRequest(`items?barcode=eq.${barcode}&store_id=eq.${STORE_ID}&select=id,name,barcode,unit`);
@@ -127,7 +155,9 @@ app.post('/api/scan', async (req, res) => {
       before: currentQty,
       after: newQty,
       change: changeAmount,
-      mode: mode
+      mode: mode,
+      autoDetected: !!detectedMode,  // 접두사로 자동 감지되었는지 여부
+      prefix: prefix  // 감지된 접두사 (디버깅용)
     });
 
   } catch (error) {

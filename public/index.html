@@ -73,6 +73,10 @@
       color: #fff;
     }
 
+    .mode-btn.auto-btn.active {
+      background: linear-gradient(135deg, #4338ca 0%, #6366f1 100%);
+    }
+
     .mode-btn.input-btn.active {
       background: linear-gradient(135deg, #065f46 0%, #047857 100%);
     }
@@ -309,6 +313,11 @@
       margin-left: 8px;
     }
 
+    .mode-badge.auto {
+      background: #4338ca;
+      color: #fff;
+    }
+
     .mode-badge.input {
       background: #065f46;
       color: #fff;
@@ -350,7 +359,10 @@
 
     <!-- 모드 토글 -->
     <div class="mode-toggle">
-      <button class="mode-btn input-btn active" onclick="setMode('input')">
+      <button class="mode-btn auto-btn active" onclick="setMode('auto')">
+        🔄 자동
+      </button>
+      <button class="mode-btn input-btn" onclick="setMode('input')">
         📥 입고
       </button>
       <button class="mode-btn output-btn" onclick="setMode('output')">
@@ -399,7 +411,14 @@
     let quantity = 1;
     let history = [];
     let debounceTimer = null;
-    let currentMode = 'input'; // 'input' 또는 'output'
+    let currentMode = 'auto'; // 'auto', 'input', 또는 'output'
+
+    // 모드 텍스트 맵
+    const modeText = {
+      auto: '자동',
+      input: '입고',
+      output: '출고'
+    };
 
     // 모드 변경
     function setMode(mode) {
@@ -410,17 +429,22 @@
       document.querySelector(`.mode-btn.${mode}-btn`).classList.add('active');
 
       // 배지 변경
-      modeBadge.textContent = mode === 'input' ? '입고' : '출고';
+      modeBadge.textContent = modeText[mode];
       modeBadge.className = `mode-badge ${mode}`;
 
       // 라벨 변경
-      scanLabel.textContent = mode === 'input' ? '바코드를 스캔하세요 (입고)' : '바코드를 스캔하세요 (출고)';
+      if (mode === 'auto') {
+        scanLabel.textContent = '바코드를 스캔하세요 (자동 감지)';
+      } else {
+        scanLabel.textContent = `바코드를 스캔하세요 (${modeText[mode]})`;
+      }
 
       // 배경색 변경
+      document.body.classList.remove('output-mode', 'auto-mode');
       if (mode === 'output') {
         document.body.classList.add('output-mode');
-      } else {
-        document.body.classList.remove('output-mode');
+      } else if (mode === 'auto') {
+        document.body.classList.add('auto-mode');
       }
 
       // 포커스 유지
@@ -463,10 +487,13 @@
       setTimeout(() => barcodeInput.classList.remove('scanning'), 500);
 
       try {
+        // 자동 모드일 때는 기본값 'input'을 보내고, 서버에서 접두사로 판단
+        const modeToSend = currentMode === 'auto' ? 'input' : currentMode;
+
         const response = await fetch('/api/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ barcode, quantity, mode: currentMode })
+          body: JSON.stringify({ barcode, quantity, mode: modeToSend })
         });
 
         const result = await response.json();
