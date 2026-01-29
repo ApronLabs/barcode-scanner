@@ -115,10 +115,24 @@ async function processBarcodeDirect(rawBarcode) {
     }
 
     const item = items[0];
-    const inventories = await supabaseRequest(`inventory?item_id=eq.${item.id}&store_id=eq.${STORE_ID}&select=id,quantity`);
+    let inventories = await supabaseRequest(`inventory?item_id=eq.${item.id}&store_id=eq.${STORE_ID}&select=id,quantity`);
+
+    // 재고 레코드가 없으면 자동 생성
     if (inventories.length === 0) {
-      console.log(`  [SERVER] ❌ 재고 정보 없음: ${item.name}`);
-      return;
+      console.log(`  [SERVER] 📝 재고 레코드 생성: ${item.name}`);
+      const newInventory = await supabaseRequest('inventory', {
+        method: 'POST',
+        body: JSON.stringify({
+          item_id: item.id,
+          store_id: STORE_ID,
+          quantity: 0
+        }),
+      });
+      if (!newInventory || newInventory.length === 0) {
+        console.log(`  [SERVER] ❌ 재고 레코드 생성 실패: ${item.name}`);
+        return;
+      }
+      inventories = newInventory;
     }
 
     const inventory = inventories[0];
@@ -357,9 +371,22 @@ app.post('/api/scan', async (req, res) => {
     }
 
     const item = items[0];
-    const inventories = await supabaseRequest(`inventory?item_id=eq.${item.id}&store_id=eq.${STORE_ID}&select=id,quantity`);
+    let inventories = await supabaseRequest(`inventory?item_id=eq.${item.id}&store_id=eq.${STORE_ID}&select=id,quantity`);
+
+    // 재고 레코드가 없으면 자동 생성
     if (inventories.length === 0) {
-      return res.json({ success: false, message: '재고 정보가 없습니다.', item: item.name });
+      const newInventory = await supabaseRequest('inventory', {
+        method: 'POST',
+        body: JSON.stringify({
+          item_id: item.id,
+          store_id: STORE_ID,
+          quantity: 0
+        }),
+      });
+      if (!newInventory || newInventory.length === 0) {
+        return res.json({ success: false, message: '재고 레코드 생성 실패', item: item.name });
+      }
+      inventories = newInventory;
     }
 
     const inventory = inventories[0];
