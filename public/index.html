@@ -457,8 +457,21 @@
       quantityDisplay.textContent = quantity;
     }
 
-    // 바코드 스캔 처리
+    // WebSocket 모드 플래그 (Global Key Listener 사용 시)
+    let useWebSocketMode = false;
+
+    // 중복 처리 방지용
+    let lastProcessedBarcode = '';
+    let lastProcessedTime = 0;
+
+    // 바코드 스캔 처리 (입력창 - WebSocket 모드가 아닐 때만)
     barcodeInput.addEventListener('input', (e) => {
+      // WebSocket 모드면 입력창 이벤트 무시 (Global Key Listener가 처리)
+      if (useWebSocketMode) {
+        e.target.value = '';
+        return;
+      }
+
       clearTimeout(debounceTimer);
 
       // 바코드 스캐너는 빠르게 입력 후 Enter 또는 잠시 멈춤
@@ -470,8 +483,16 @@
       }, 100);
     });
 
-    // Enter 키로도 처리
+    // Enter 키로도 처리 (WebSocket 모드가 아닐 때만)
     barcodeInput.addEventListener('keydown', (e) => {
+      // WebSocket 모드면 입력창 이벤트 무시
+      if (useWebSocketMode) {
+        if (e.key === 'Enter') {
+          e.target.value = '';
+        }
+        return;
+      }
+
       if (e.key === 'Enter') {
         clearTimeout(debounceTimer);
         const barcode = e.target.value.trim();
@@ -483,6 +504,16 @@
 
     // 바코드 처리
     async function processBarcode(barcode) {
+      // 중복 처리 방지 (같은 바코드 1초 이내 재처리 방지)
+      const now = Date.now();
+      if (barcode === lastProcessedBarcode && (now - lastProcessedTime) < 1000) {
+        console.log('[SKIP] 중복 바코드 무시:', barcode);
+        barcodeInput.value = '';
+        return;
+      }
+      lastProcessedBarcode = barcode;
+      lastProcessedTime = now;
+
       barcodeInput.classList.add('scanning');
       setTimeout(() => barcodeInput.classList.remove('scanning'), 500);
 
@@ -639,6 +670,17 @@
         try {
           const data = JSON.parse(event.data);
 
+          // 서버 상태 메시지 - Global Key Listener 모드 확인
+          if (data.type === 'status') {
+            if (data.mode === 'global-key-listener') {
+              useWebSocketMode = true;
+              console.log('[WS] Global Key Listener 모드 활성화 - 입력창 비활성화');
+              barcodeInput.placeholder = 'Global Key Listener 모드';
+              barcodeInput.value = '';
+            }
+            return;
+          }
+
           if (data.type === 'barcode' && data.scanId) {
             // Global Key Listener로부터 바코드 수신
             console.log('[WS] 바코드 수신:', data.barcode);
@@ -659,6 +701,8 @@
 
       ws.onclose = () => {
         console.log('[WS] 연결 끊김, 3초 후 재연결...');
+        useWebSocketMode = false;
+        barcodeInput.placeholder = '바코드 대기 중...';
         wsReconnectTimer = setTimeout(connectWebSocket, 3000);
       };
 
