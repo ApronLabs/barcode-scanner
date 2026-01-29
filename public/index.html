@@ -620,6 +620,55 @@
 
     // 초기 포커스
     barcodeInput.focus();
+
+    // ========================================
+    // WebSocket 연결 - Global Key Listener 지원
+    // ========================================
+    let ws = null;
+    let wsReconnectTimer = null;
+
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}`);
+
+      ws.onopen = () => {
+        console.log('[WS] 서버 연결됨');
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'barcode' && data.scanId) {
+            // Global Key Listener로부터 바코드 수신
+            console.log('[WS] 바코드 수신:', data.barcode);
+
+            // 바코드 처리
+            await processBarcode(data.barcode);
+
+            // 서버에 처리 완료 알림 (서버가 중복 처리하지 않도록)
+            ws.send(JSON.stringify({
+              type: 'processed',
+              scanId: data.scanId
+            }));
+          }
+        } catch (e) {
+          console.error('[WS] 메시지 처리 오류:', e);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] 연결 끊김, 3초 후 재연결...');
+        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error('[WS] 오류:', err);
+      };
+    }
+
+    // WebSocket 연결 시작
+    connectWebSocket();
   </script>
 </body>
 </html>
