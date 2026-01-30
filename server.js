@@ -150,6 +150,42 @@ async function processBarcodeDirect(rawBarcode) {
       body: JSON.stringify({ quantity: newQty, last_updated_at: new Date().toISOString() }),
     });
 
+    // 발주-입고 연동 (입고 모드일 때만)
+    let supplierOrderItemId = null;
+    let orderMatchInfo = null;
+
+    if (mode === 'input') {
+      // 대기 중인 발주 항목 조회
+      const pendingOrders = await supabaseRequest(
+        `supplier_order_items?item_id=eq.${item.id}&select=id,quantity,received_quantity,order_id,supplier_orders!inner(store_id,status)&supplier_orders.store_id=eq.${STORE_ID}&supplier_orders.status=eq.ordered`
+      );
+
+      if (pendingOrders && pendingOrders.length > 0) {
+        const orderItem = pendingOrders[0];
+        const currentReceived = orderItem.received_quantity || 0;
+        const pendingQty = orderItem.quantity - currentReceived;
+        const inputQty = 1; // 서버 직접 처리는 항상 1개
+
+        if (pendingQty > 0) {
+          const orderReceiveQty = Math.min(inputQty, pendingQty);
+          const newReceived = currentReceived + orderReceiveQty;
+
+          await supabaseRequest(`supplier_order_items?id=eq.${orderItem.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ received_quantity: newReceived }),
+          });
+
+          supplierOrderItemId = orderItem.id;
+          orderMatchInfo = {
+            orderQty: orderItem.quantity,
+            newReceived,
+            remainingQty: orderItem.quantity - newReceived,
+            isComplete: newReceived >= orderItem.quantity,
+          };
+        }
+      }
+    }
+
     await supabaseRequest('inventory_logs', {
       method: 'POST',
       body: JSON.stringify({
@@ -160,12 +196,21 @@ async function processBarcodeDirect(rawBarcode) {
         quantity_after: newQty,
         change_amount: changeAmount,
         change_type: mode === 'output' ? 'output' : 'input',
-        notes: `바코드 스캐너 ${mode === 'output' ? '출고' : '입고'} (서버 직접 처리)`
+        notes: `바코드 스캐너 ${mode === 'output' ? '출고' : '입고'} (서버 직접 처리)`,
+        supplier_order_item_id: supplierOrderItemId
       }),
     });
 
     const icon = mode === 'output' ? '📤' : '📥';
-    console.log(`  [SERVER] ${icon} ${item.name}: ${currentQty} → ${newQty} (${mode === 'output' ? '출고' : '입고'})`);
+    let orderMsg = '';
+    if (orderMatchInfo) {
+      if (orderMatchInfo.isComplete) {
+        orderMsg = ` [발주 ${orderMatchInfo.orderQty}개 입고 완료]`;
+      } else {
+        orderMsg = ` [발주 연동: 남은 ${orderMatchInfo.remainingQty}개]`;
+      }
+    }
+    console.log(`  [SERVER] ${icon} ${item.name}: ${currentQty} → ${newQty} (${mode === 'output' ? '출고' : '입고'})${orderMsg}`);
   } catch (error) {
     console.log(`  [SERVER] ❌ 처리 오류: ${error.message}`);
   }
