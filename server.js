@@ -12,6 +12,7 @@ const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const { GlobalKeyboardListener } = require('node-global-key-listener');
+const say = require('say');
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -202,6 +203,7 @@ async function processBarcodeDirect(rawBarcode) {
     });
 
     const icon = mode === 'output' ? '📤' : '📥';
+    const actionText = mode === 'output' ? '출고' : '입고';
     let orderMsg = '';
     if (orderMatchInfo) {
       if (orderMatchInfo.isComplete) {
@@ -210,7 +212,10 @@ async function processBarcodeDirect(rawBarcode) {
         orderMsg = ` [발주 연동: 남은 ${orderMatchInfo.remainingQty}개]`;
       }
     }
-    console.log(`  [SERVER] ${icon} ${item.name}: ${currentQty} → ${newQty} (${mode === 'output' ? '출고' : '입고'})${orderMsg}`);
+    console.log(`  [SERVER] ${icon} ${item.name}: ${currentQty} → ${newQty} (${actionText})${orderMsg}`);
+
+    // TTS 음성 안내: "품목명 N개 입고/출고 되었습니다"
+    speak(`${item.name} 1개 ${actionText} 되었습니다`);
   } catch (error) {
     console.log(`  [SERVER] ❌ 처리 오류: ${error.message}`);
   }
@@ -356,6 +361,17 @@ function initGlobalKeyListener() {
     console.error('  [KEY] Global Key Listener 초기화 실패:', err.message);
     console.log('  → 폴백 모드: 브라우저 입력창 사용');
     return false;
+  }
+}
+
+// ========================================
+// TTS 음성 안내
+// ========================================
+function speak(text) {
+  try {
+    say.speak(text, null, 1.2); // text, voice (null = default), speed
+  } catch (e) {
+    console.log('  [TTS] 음성 재생 실패:', e.message);
   }
 }
 

@@ -533,6 +533,11 @@
           showResult('success', result);
           addToHistory(result);
           playSound('success');
+
+          // TTS 음성 안내: "품목명 N개 입고/출고 되었습니다"
+          const changeCount = Math.abs(result.change);
+          const actionText = result.mode === 'output' ? '출고' : '입고';
+          speak(`${result.item} ${changeCount}개 ${actionText} 되었습니다`);
         } else {
           showResult('error', result);
           playSound('error');
@@ -634,6 +639,39 @@
       } catch (e) {
         // 사운드 재생 실패 무시
       }
+    }
+
+    // TTS 음성 안내
+    function speak(text) {
+      try {
+        // 이전 음성 취소
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ko-KR';
+        utterance.rate = 1.2; // 약간 빠르게
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        // 한국어 음성 찾기
+        const voices = window.speechSynthesis.getVoices();
+        const koreanVoice = voices.find(v => v.lang.startsWith('ko'));
+        if (koreanVoice) {
+          utterance.voice = koreanVoice;
+        }
+
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.log('[TTS] 음성 재생 실패:', e);
+      }
+    }
+
+    // 음성 목록 로드 (일부 브라우저에서 필요)
+    if (window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices();
+      };
     }
 
     // 포커스 유지
