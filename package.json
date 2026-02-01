@@ -1,6 +1,6 @@
 {
   "name": "barcode-scanner",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "매출지킴이 바코드 스캐너",
   "main": "main.js",
   "author": "Semicolon Dev Team",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "electron-store": "^8.1.0",
     "electron-updater": "^6.1.7",
     "express": "^4.18.2",
     "node-global-key-listener": "^0.3.0",
@@ -38,8 +38,12 @@
     ],
     "extraResources": [
       {
-        "from": ".env",
-        "to": ".env"
+        "from": "public",
+        "to": "public"
+      },
+      {
+        "from": "server.js",
+        "to": "server.js"
       }
     ],
     "win": {

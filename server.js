@@ -4,15 +4,9 @@
  * 브라우저 탭 포커스와 무관하게 바코드 스캔 가능
  * 빠른 연속 키 입력을 감지하여 바코드로 인식
  * Electron 앱에서 실행 시 IPC 통신 지원
+ *
+ * 환경변수는 Electron main.js에서 fork 시 전달됩니다.
  */
-
-// .env 파일 경로 지정 (Electron 패키징 시 사용)
-const dotenvPath = process.env.DOTENV_CONFIG_PATH;
-if (dotenvPath) {
-  require('dotenv').config({ path: dotenvPath });
-} else {
-  require('dotenv').config();
-}
 
 // Electron IPC 지원 여부
 const isElectron = typeof process.send === 'function';
@@ -51,11 +45,11 @@ const BARCODE_PREFIX = {
   OUTPUT: '-',
 };
 
-// Supabase 설정 (.env 파일에서 로드)
+// Supabase 설정 (Electron main.js에서 환경변수로 전달)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-// 매장 ID (.env 파일에서 로드)
+// 매장 ID (Electron main.js에서 환경변수로 전달)
 const STORE_ID = process.env.STORE_ID;
 
 app.use(cors());
