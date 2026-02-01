@@ -8,7 +8,9 @@
 const { app, Tray, Menu, nativeImage, Notification } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
-const { autoUpdater } = require('electron-updater');
+
+// autoUpdater는 앱 준비 후 lazy-load (electron-updater가 app.getVersion() 필요)
+let autoUpdater = null;
 
 // 단일 인스턴스 잠금
 const gotTheLock = app.requestSingleInstanceLock();
@@ -25,6 +27,8 @@ app.setName('매출지킴이 바코드 스캐너');
 
 // 자동 업데이트 설정
 function setupAutoUpdater() {
+  // 앱이 준비된 후에 electron-updater 로드
+  autoUpdater = require('electron-updater').autoUpdater;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
@@ -154,7 +158,9 @@ function createTray() {
     {
       label: '업데이트 확인',
       click: () => {
-        autoUpdater.checkForUpdatesAndNotify();
+        if (autoUpdater) {
+          autoUpdater.checkForUpdatesAndNotify();
+        }
       }
     },
     { type: 'separator' },
