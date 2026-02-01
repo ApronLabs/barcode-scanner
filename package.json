@@ -1,17 +1,68 @@
 {
   "name": "barcode-scanner",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "매출지킴이 바코드 스캐너",
-  "main": "server.js",
+  "main": "main.js",
+  "author": "Semicolon Dev Team",
   "scripts": {
-    "start": "node server.js"
+    "start": "electron .",
+    "start:server": "node server.js",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir",
+    "publish": "electron-builder --win --publish always"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "electron-updater": "^6.1.7",
     "express": "^4.18.2",
     "node-global-key-listener": "^0.3.0",
     "say": "^0.16.0",
     "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.semicolon.barcode-scanner",
+    "productName": "매출지킴이 바코드 스캐너",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**"
+    ],
+    "extraResources": [
+      {
+        "from": ".env",
+        "to": ".env"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "매출지킴이 바코드 스캐너"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "semicolon-devteam",
+      "repo": "proj-sales-keeper"
+    }
   }
 }

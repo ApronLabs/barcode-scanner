@@ -1,11 +1,28 @@
 /**
- * 매출지킴이 바코드 스캐너 서버 (v2 - Global Key Listener)
+ * 매출지킴이 바코드 스캐너 서버 (v2.1 - Electron 지원)
  *
  * 브라우저 탭 포커스와 무관하게 바코드 스캔 가능
  * 빠른 연속 키 입력을 감지하여 바코드로 인식
+ * Electron 앱에서 실행 시 IPC 통신 지원
  */
 
-require('dotenv').config();
+// .env 파일 경로 지정 (Electron 패키징 시 사용)
+const dotenvPath = process.env.DOTENV_CONFIG_PATH;
+if (dotenvPath) {
+  require('dotenv').config({ path: dotenvPath });
+} else {
+  require('dotenv').config();
+}
+
+// Electron IPC 지원 여부
+const isElectron = typeof process.send === 'function';
+
+// Electron 메인 프로세스에 메시지 전송
+function sendToMain(type, data) {
+  if (isElectron) {
+    process.send({ type, ...data });
+  }
+}
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -216,6 +233,15 @@ async function processBarcodeDirect(rawBarcode) {
 
     // TTS 음성 안내: "품목명 N개 입고/출고 되었습니다"
     speak(`${item.name} 1개 ${actionText} 되었습니다`);
+
+    // Electron 메인 프로세스에 스캔 결과 전송 (알림용)
+    sendToMain('scan', {
+      item: item.name,
+      mode,
+      change: changeAmount,
+      before: currentQty,
+      after: newQty
+    });
   } catch (error) {
     console.log(`  [SERVER] ❌ 처리 오류: ${error.message}`);
   }
