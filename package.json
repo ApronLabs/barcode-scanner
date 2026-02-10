@@ -82,8 +82,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "semicolon-devteam",
-      "repo": "proj-sales-keeper"
+      "owner": "ApronLabs",
+      "repo": "barcode-scanner"
     }
   }
 }
