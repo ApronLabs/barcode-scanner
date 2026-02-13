@@ -5,7 +5,8 @@
  * Global Key Listener로 포커스 없이도 바코드 감지
  */
 
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 let Store = null;
@@ -24,6 +25,38 @@ function initStore() {
     });
   }
   return store;
+}
+
+// Authenticated fetch helper - handles cookie + 401 detection
+async function authenticatedFetch(url, options = {}) {
+  const s = initStore();
+  const serverUrl = s.get('serverUrl');
+  const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
+  const token = cookies.length > 0 ? cookies[0].value : '';
+
+  const mergedOptions = {
+    ...options,
+    headers: {
+      ...options.headers,
+      Cookie: `session-token=${token}`,
+    },
+  };
+
+  const response = await fetch(url, mergedOptions);
+
+  if (response.status === 401) {
+    // Clear cookie
+    try {
+      await session.defaultSession.cookies.remove(serverUrl, 'session-token');
+    } catch (e) { /* ignore */ }
+    // Notify renderer
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('session-expired');
+    }
+    return { unauthorized: true, response };
+  }
+
+  return { unauthorized: false, response };
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -175,11 +208,10 @@ ipcMain.handle('get-stores', async () => {
   const s = initStore();
   const serverUrl = s.get('serverUrl');
   try {
-    const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
-    const token = cookies.length > 0 ? cookies[0].value : '';
-    const response = await fetch(`${serverUrl}/api/stores`, {
-      headers: { Cookie: `session-token=${token}` },
-    });
+    const { unauthorized, response } = await authenticatedFetch(`${serverUrl}/api/stores`);
+    if (unauthorized) {
+      return { success: false, code: 'UNAUTHORIZED', message: '세션이 만료되었습니다' };
+    }
     if (!response.ok) {
       return { success: false, message: '매장 목록 조회 실패' };
     }
@@ -195,12 +227,12 @@ ipcMain.handle('lookup-barcode', async (event, { barcode, storeId }) => {
   const s = initStore();
   const serverUrl = s.get('serverUrl');
   try {
-    const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
-    const token = cookies.length > 0 ? cookies[0].value : '';
-    const response = await fetch(
-      `${serverUrl}/api/inventory/barcode?barcode=${encodeURIComponent(barcode)}&storeId=${encodeURIComponent(storeId)}`,
-      { headers: { Cookie: `session-token=${token}` } }
+    const { unauthorized, response } = await authenticatedFetch(
+      `${serverUrl}/api/inventory/barcode?barcode=${encodeURIComponent(barcode)}&storeId=${encodeURIComponent(storeId)}`
     );
+    if (unauthorized) {
+      return { success: false, code: 'UNAUTHORIZED', message: '세션이 만료되었습니다' };
+    }
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       return { success: false, message: err.error || '조회 실패' };
@@ -217,16 +249,14 @@ ipcMain.handle('update-inventory', async (event, payload) => {
   const s = initStore();
   const serverUrl = s.get('serverUrl');
   try {
-    const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
-    const token = cookies.length > 0 ? cookies[0].value : '';
-    const response = await fetch(`${serverUrl}/api/inventory`, {
+    const { unauthorized, response } = await authenticatedFetch(`${serverUrl}/api/inventory`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: `session-token=${token}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (unauthorized) {
+      return { success: false, code: 'UNAUTHORIZED', message: '세션이 만료되었습니다' };
+    }
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       return { success: false, message: err.error || '재고 변경 실패' };
@@ -300,6 +330,51 @@ app.whenReady().then(() => {
 
   createWindow();
   initGlobalKeyListener();
+
+  // Auto updater
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    console.log('  [UPDATE] 업데이트 발견:', info.version);
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '업데이트 알림',
+      message: `새 버전 (v${info.version})이 있습니다.\n업데이트를 다운로드할까요?`,
+      buttons: ['업데이트', '나중에'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.downloadUpdate();
+      }
+    });
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    console.log('  [UPDATE] 다운로드 완료');
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '업데이트 준비 완료',
+      message: '업데이트가 다운로드되었습니다.\n지금 재시작하여 설치할까요?',
+      buttons: ['지금 재시작', '나중에'],
+      defaultId: 0,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.log('  [UPDATE] 에러:', err.message);
+  });
+
+  // Check for updates after 3 seconds
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.log('  [UPDATE] 체크 실패:', err.message);
+    });
+  }, 3000);
 });
 
 app.on('window-all-closed', () => {

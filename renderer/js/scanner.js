@@ -55,6 +55,12 @@ async function init() {
     });
   }
 
+  // Session expired listener
+  window.api.onSessionExpired(() => {
+    speak('세션이 만료되었습니다. 다시 로그인해주세요.');
+    setTimeout(() => window.api.navigate('login'), 1500);
+  });
+
   barcodeInput.focus();
 }
 
@@ -164,9 +170,17 @@ async function processBarcode(rawBarcode) {
   // 1. Lookup barcode
   const lookup = await window.api.lookupBarcode(barcode, storeId);
 
+  if (lookup.code === 'UNAUTHORIZED') {
+    isProcessing = false;
+    return; // session-expired event will handle navigation
+  }
+
   if (!lookup.success || !lookup.item) {
-    showResult('error', { message: lookup.item === null ? '등록되지 않은 바코드입니다.' : (lookup.message || '조회 실패'), barcode });
+    const isUnregistered = lookup.item === null;
+    const errorMessage = isUnregistered ? '등록되지 않은 바코드입니다.' : (lookup.message || '조회 실패');
+    showResult('error', { message: errorMessage, barcode });
     playSound('error');
+    speak(isUnregistered ? '미등록 상품입니다' : errorMessage);
     barcodeInput.value = '';
     barcodeInput.focus();
     isProcessing = false;
@@ -185,9 +199,16 @@ async function processBarcode(rawBarcode) {
     inventoryId: item.inventoryId || undefined,
   });
 
+  if (update.code === 'UNAUTHORIZED') {
+    isProcessing = false;
+    return; // session-expired event will handle navigation
+  }
+
   if (!update.success) {
-    showResult('error', { message: update.message || '재고 변경 실패', barcode });
+    const errorMessage = update.message || '재고 변경 실패';
+    showResult('error', { message: errorMessage, barcode });
     playSound('error');
+    speak(errorMessage);
   } else {
     const changeAmount = actionType === 'output' ? -quantity : quantity;
     const before = item.currentQuantity;

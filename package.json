@@ -1,6 +1,6 @@
 {
   "name": "barcode-scanner",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "매출지킴이 바코드 스캐너",
   "main": "main.js",
   "author": "Semicolon Dev Team",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.3.9",
     "node-global-key-listener": "^0.3.0"
   },
   "devDependencies": {
@@ -51,6 +52,13 @@
       "icon": "assets/icon.png",
       "category": "public.app-category.business"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ApronLabs",
+        "repo": "barcode-scanner"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

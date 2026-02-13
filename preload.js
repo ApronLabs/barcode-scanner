@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('api', {
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   getKeyListenerStatus: () => ipcRenderer.invoke('get-key-listener-status'),
   onBarcodeScanned: (callback) => ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode)),
+  onSessionExpired: (callback) => ipcRenderer.on('session-expired', () => callback()),
 });
