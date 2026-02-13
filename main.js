@@ -18,7 +18,7 @@ function initStore() {
       defaults: {
         lastStoreId: null,
         lastStoreName: null,
-        serverUrl: 'http://13.210.110.218',
+        serverUrl: 'https://no-sim.co.kr',
       },
     });
   }
