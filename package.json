@@ -1,29 +1,21 @@
 {
   "name": "barcode-scanner",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "description": "매출지킴이 바코드 스캐너",
   "main": "main.js",
   "author": "Semicolon Dev Team",
   "scripts": {
     "start": "electron .",
-    "start:server": "node server.js",
     "build": "electron-builder --win --mac",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
-    "build:dir": "electron-builder --dir",
-    "publish": "electron-builder --win --mac --publish always"
+    "build:dir": "electron-builder --dir"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "electron-store": "^8.1.0",
-    "electron-updater": "^6.1.7",
-    "express": "^4.18.2",
-    "node-global-key-listener": "^0.3.0",
-    "say": "^0.16.0",
-    "ws": "^8.16.0"
+    "electron-store": "^8.1.0"
   },
   "devDependencies": {
-    "electron": "28.3.3",
+    "electron": "^28.3.3",
     "electron-builder": "^24.9.1"
   },
   "build": {
@@ -33,26 +25,17 @@
       "output": "dist"
     },
     "files": [
-      "**/*",
-      "!dist/**"
-    ],
-    "extraResources": [
-      {
-        "from": "public",
-        "to": "public"
-      },
-      {
-        "from": "server.js",
-        "to": "server.js"
-      }
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ],
       "icon": "assets/icon.ico"
@@ -61,10 +44,7 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
+          "arch": ["x64", "arm64"]
         }
       ],
       "icon": "assets/icon.png",
@@ -73,17 +53,9 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "assets/icon.ico",
-      "uninstallerIcon": "assets/icon.ico",
-      "installerHeaderIcon": "assets/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "매출지킴이 바코드 스캐너"
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "ApronLabs",
-      "repo": "barcode-scanner"
     }
   }
 }

@@ -16,3 +16,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Old backup (v2)
+old-backup/

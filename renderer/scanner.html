@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>매출지킴이 - 바코드 스캐너</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Top bar -->
+    <div class="top-bar">
+      <div class="store-label">
+        매장: <strong id="storeName">-</strong>
+      </div>
+      <button class="logout-btn" id="changeStoreBtn">매장 변경</button>
+    </div>
+
+    <!-- Mode toggle -->
+    <div class="mode-toggle">
+      <button class="mode-btn auto-btn active" data-mode="auto">자동</button>
+      <button class="mode-btn input-btn" data-mode="input">입고</button>
+      <button class="mode-btn output-btn" data-mode="output">출고</button>
+    </div>
+
+    <!-- Scan box -->
+    <div class="scan-box">
+      <span class="scan-label" id="scanLabel">바코드를 스캔하세요 (자동 감지)</span>
+      <input
+        type="text"
+        class="barcode-input"
+        id="barcodeInput"
+        placeholder="바코드 대기 중..."
+        autofocus
+      >
+      <div class="quantity-row">
+        <button class="quantity-btn" id="qtyMinus">-</button>
+        <div class="quantity-display" id="quantityDisplay">1</div>
+        <button class="quantity-btn" id="qtyPlus">+</button>
+      </div>
+    </div>
+
+    <!-- Result -->
+    <div class="result-box" id="resultBox">
+      <div class="waiting">바코드를 스캔하면 결과가 표시됩니다</div>
+    </div>
+
+    <!-- History -->
+    <div class="history-box">
+      <h3>스캔 이력</h3>
+      <div class="history-list" id="historyList">
+        <div class="empty-history">스캔 이력이 없습니다</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/scanner.js"></script>
+</body>
+</html>
