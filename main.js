@@ -2,6 +2,7 @@
  * 매출지킴이 바코드 스캐너 v3 - Electron 메인 프로세스
  *
  * EC2 API 연동 + 로그인 + 매장 선택 UI
+ * Global Key Listener로 포커스 없이도 바코드 감지
  */
 
 const { app, BrowserWindow, ipcMain, session } = require('electron');
@@ -34,6 +35,104 @@ let mainWindow = null;
 
 app.setName('매출지킴이 바코드 스캐너');
 
+// ========================================
+// Global Key Listener - 바코드 스캐너 감지
+// ========================================
+
+const BARCODE_CONFIG = {
+  INPUT_THRESHOLD_MS: 50,
+  MIN_LENGTH: 4,
+  BUFFER_TIMEOUT_MS: 200,
+};
+
+let keyBuffer = '';
+let lastKeyTime = 0;
+let bufferTimeout = null;
+let fastKeyCount = 0;
+let keyListener = null;
+
+function keyToChar(event) {
+  const { name, state } = event;
+  if (state !== 'DOWN') return null;
+
+  if (name === 'RETURN') return '\n';
+  if (name.match(/^[0-9]$/)) return name;
+  if (name.match(/^NUMPAD [0-9]$/)) return name.replace('NUMPAD ', '');
+  if (name.match(/^[A-Z]$/)) return name.toLowerCase();
+  if (name === 'MINUS' || name === 'NUMPAD MINUS') return '-';
+  if (name === 'PERIOD' || name === 'NUMPAD PERIOD') return '.';
+  if (name === 'SLASH' || name === 'NUMPAD SLASH') return '/';
+
+  return null;
+}
+
+function handleBarcodeDetected(barcode) {
+  console.log(`  [SCAN] 바코드 감지됨: ${barcode}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('barcode-scanned', barcode);
+  }
+}
+
+function processKeyEvent(event) {
+  const char = keyToChar(event);
+  if (!char) return;
+
+  const now = Date.now();
+  const timeDiff = now - lastKeyTime;
+  lastKeyTime = now;
+
+  if (bufferTimeout) clearTimeout(bufferTimeout);
+
+  const isFastInput = timeDiff < BARCODE_CONFIG.INPUT_THRESHOLD_MS;
+
+  if (isFastInput) {
+    fastKeyCount++;
+  } else {
+    if (keyBuffer.length > 0 && fastKeyCount < 3) {
+      keyBuffer = '';
+      fastKeyCount = 0;
+    }
+  }
+
+  if (char === '\n') {
+    if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 3) {
+      handleBarcodeDetected(keyBuffer);
+    }
+    keyBuffer = '';
+    fastKeyCount = 0;
+    return;
+  }
+
+  keyBuffer += char;
+
+  bufferTimeout = setTimeout(() => {
+    if (keyBuffer.length > 0) {
+      if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 3) {
+        handleBarcodeDetected(keyBuffer);
+      }
+      keyBuffer = '';
+      fastKeyCount = 0;
+    }
+  }, BARCODE_CONFIG.BUFFER_TIMEOUT_MS);
+}
+
+function initGlobalKeyListener() {
+  try {
+    const { GlobalKeyboardListener } = require('node-global-key-listener');
+    keyListener = new GlobalKeyboardListener();
+    keyListener.addListener((event) => processKeyEvent(event));
+    console.log('  [KEY] Global Key Listener 활성화');
+    return true;
+  } catch (err) {
+    console.error('  [KEY] Global Key Listener 실패:', err.message);
+    return false;
+  }
+}
+
+// ========================================
+// IPC Handlers
+// ========================================
+
 // IPC: 로그인
 ipcMain.handle('login', async (event, { email, password }) => {
   const s = initStore();
@@ -48,7 +147,6 @@ ipcMain.handle('login', async (event, { email, password }) => {
     if (!response.ok) {
       return { success: false, message: data.error || '로그인 실패' };
     }
-    // Extract session-token from Set-Cookie header
     const setCookie = response.headers.getSetCookie?.() || [];
     let sessionToken = null;
     for (const cookie of setCookie) {
@@ -59,7 +157,6 @@ ipcMain.handle('login', async (event, { email, password }) => {
       }
     }
     if (sessionToken) {
-      // Store cookie in Electron session for subsequent requests
       await session.defaultSession.cookies.set({
         url: serverUrl,
         name: 'session-token',
@@ -166,6 +263,15 @@ ipcMain.handle('save-config', (event, config) => {
   return { success: true };
 });
 
+// IPC: 글로벌 키 리스너 상태
+ipcMain.handle('get-key-listener-status', () => {
+  return { active: keyListener !== null };
+});
+
+// ========================================
+// Window & App Lifecycle
+// ========================================
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 700,
@@ -191,11 +297,18 @@ app.whenReady().then(() => {
   console.log('========================================');
   console.log('  매출지킴이 바코드 스캐너 v' + app.getVersion());
   console.log('========================================');
+
   createWindow();
+  initGlobalKeyListener();
 });
 
 app.on('window-all-closed', () => {
+  if (keyListener) keyListener.kill();
   app.quit();
+});
+
+app.on('before-quit', () => {
+  if (keyListener) keyListener.kill();
 });
 
 app.on('second-instance', () => {

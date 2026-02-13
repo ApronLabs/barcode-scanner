@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('api', {
   navigate: (page) => ipcRenderer.send('navigate', page),
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
+  getKeyListenerStatus: () => ipcRenderer.invoke('get-key-listener-status'),
+  onBarcodeScanned: (callback) => ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode)),
 });

@@ -12,7 +12,8 @@
     "build:dir": "electron-builder --dir"
   },
   "dependencies": {
-    "electron-store": "^8.1.0"
+    "electron-store": "^8.1.0",
+    "node-global-key-listener": "^0.3.0"
   },
   "devDependencies": {
     "electron": "^28.3.3",

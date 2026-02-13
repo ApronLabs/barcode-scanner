@@ -19,6 +19,7 @@ let storeName = null;
 let lastProcessedBarcode = '';
 let lastProcessedTime = 0;
 let isProcessing = false;
+let useGlobalKeyListener = false;
 
 const modeText = { auto: '자동 감지', input: '입고', output: '출고' };
 
@@ -40,6 +41,20 @@ async function init() {
   }
 
   storeNameEl.textContent = storeName || '-';
+
+  // Check if global key listener is active
+  const keyStatus = await window.api.getKeyListenerStatus();
+  useGlobalKeyListener = keyStatus.active;
+
+  if (useGlobalKeyListener) {
+    barcodeInput.placeholder = 'Global Key Listener 활성 - 포커스 불필요';
+    scanLabel.textContent = `바코드를 스캔하세요 (${modeText[currentMode]}) - 백그라운드 감지 중`;
+    // Listen for barcodes from main process
+    window.api.onBarcodeScanned((barcode) => {
+      if (!isProcessing) processBarcode(barcode);
+    });
+  }
+
   barcodeInput.focus();
 }
 
@@ -80,8 +95,9 @@ changeStoreBtn.addEventListener('click', () => {
   window.api.navigate('store-select');
 });
 
-// Barcode input handlers
+// Barcode input handlers (fallback when global key listener is not active)
 barcodeInput.addEventListener('input', () => {
+  if (useGlobalKeyListener) { barcodeInput.value = ''; return; }
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     const barcode = barcodeInput.value.trim();
@@ -92,19 +108,21 @@ barcodeInput.addEventListener('input', () => {
 });
 
 barcodeInput.addEventListener('keydown', (e) => {
+  // Tab to cycle modes (always active)
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const modes = ['auto', 'input', 'output'];
+    const idx = modes.indexOf(currentMode);
+    setMode(modes[(idx + 1) % modes.length]);
+    return;
+  }
+  if (useGlobalKeyListener) { if (e.key === 'Enter') barcodeInput.value = ''; return; }
   if (e.key === 'Enter') {
     clearTimeout(debounceTimer);
     const barcode = barcodeInput.value.trim();
     if (barcode) {
       processBarcode(barcode);
     }
-  }
-  // Tab to cycle modes
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const modes = ['auto', 'input', 'output'];
-    const idx = modes.indexOf(currentMode);
-    setMode(modes[(idx + 1) % modes.length]);
   }
 });
 
