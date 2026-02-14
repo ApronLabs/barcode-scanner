@@ -152,12 +152,14 @@ function processKeyEvent(event) {
 function initGlobalKeyListener() {
   try {
     const { GlobalKeyboardListener } = require('node-global-key-listener');
-    keyListener = new GlobalKeyboardListener();
-    keyListener.addListener((event) => processKeyEvent(event));
+    const listener = new GlobalKeyboardListener();
+    listener.addListener((event) => processKeyEvent(event));
+    keyListener = listener;
     console.log('  [KEY] Global Key Listener 활성화');
     return true;
   } catch (err) {
     console.error('  [KEY] Global Key Listener 실패:', err.message);
+    keyListener = null;
     return false;
   }
 }
@@ -378,12 +380,26 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (keyListener) keyListener.kill();
+  try {
+    if (keyListener) {
+      keyListener.kill();
+      keyListener = null;
+    }
+  } catch (e) {
+    console.error('  [KEY] Listener 종료 오류:', e.message);
+  }
   app.quit();
 });
 
 app.on('before-quit', () => {
-  if (keyListener) keyListener.kill();
+  try {
+    if (keyListener) {
+      keyListener.kill();
+      keyListener = null;
+    }
+  } catch (e) {
+    console.error('  [KEY] Listener 종료 오류:', e.message);
+  }
 });
 
 app.on('second-instance', () => {
