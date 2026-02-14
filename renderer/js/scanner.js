@@ -101,9 +101,8 @@ changeStoreBtn.addEventListener('click', () => {
   window.api.navigate('store-select');
 });
 
-// Barcode input handlers (fallback when global key listener is not active)
+// Barcode input handlers (works as fallback even when global key listener is active)
 barcodeInput.addEventListener('input', () => {
-  if (useGlobalKeyListener) { barcodeInput.value = ''; return; }
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     const barcode = barcodeInput.value.trim();
@@ -122,7 +121,6 @@ barcodeInput.addEventListener('keydown', (e) => {
     setMode(modes[(idx + 1) % modes.length]);
     return;
   }
-  if (useGlobalKeyListener) { if (e.key === 'Enter') barcodeInput.value = ''; return; }
   if (e.key === 'Enter') {
     clearTimeout(debounceTimer);
     const barcode = barcodeInput.value.trim();
