@@ -73,9 +73,9 @@ app.setName('매출지킴이 바코드 스캐너');
 // ========================================
 
 const BARCODE_CONFIG = {
-  INPUT_THRESHOLD_MS: 50,
+  INPUT_THRESHOLD_MS: 100,
   MIN_LENGTH: 4,
-  BUFFER_TIMEOUT_MS: 200,
+  BUFFER_TIMEOUT_MS: 300,
 };
 
 let keyBuffer = '';
@@ -121,14 +121,14 @@ function processKeyEvent(event) {
   if (isFastInput) {
     fastKeyCount++;
   } else {
-    if (keyBuffer.length > 0 && fastKeyCount < 3) {
+    if (keyBuffer.length > 0 && fastKeyCount < 2) {
       keyBuffer = '';
       fastKeyCount = 0;
     }
   }
 
   if (char === '\n') {
-    if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 3) {
+    if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 2) {
       handleBarcodeDetected(keyBuffer);
     }
     keyBuffer = '';
@@ -140,7 +140,7 @@ function processKeyEvent(event) {
 
   bufferTimeout = setTimeout(() => {
     if (keyBuffer.length > 0) {
-      if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 3) {
+      if (keyBuffer.length >= BARCODE_CONFIG.MIN_LENGTH && fastKeyCount >= 2) {
         handleBarcodeDetected(keyBuffer);
       }
       keyBuffer = '';
