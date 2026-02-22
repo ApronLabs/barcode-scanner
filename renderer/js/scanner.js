@@ -8,6 +8,9 @@ const storeNameEl = document.getElementById('storeName');
 const changeStoreBtn = document.getElementById('changeStoreBtn');
 const qtyMinus = document.getElementById('qtyMinus');
 const qtyPlus = document.getElementById('qtyPlus');
+const serialStatusEl = document.getElementById('serialStatus');
+const serialDot = document.getElementById('serialDot');
+const serialText = document.getElementById('serialText');
 
 // State
 let quantity = 1;
@@ -16,10 +19,12 @@ let debounceTimer = null;
 let currentMode = 'auto'; // 'auto' | 'input' | 'output'
 let storeId = null;
 let storeName = null;
-let lastProcessedBarcode = '';
-let lastProcessedTime = 0;
 let isProcessing = false;
 let useGlobalKeyListener = false;
+
+// 바코드 처리 큐
+const barcodeQueue = [];
+let queueProcessing = false;
 
 const modeText = { auto: '자동 감지', input: '입고', output: '출고' };
 
@@ -51,9 +56,23 @@ async function init() {
     scanLabel.textContent = `바코드를 스캔하세요 (${modeText[currentMode]}) - 백그라운드 감지 중`;
     // Listen for barcodes from main process
     window.api.onBarcodeScanned((barcode) => {
-      if (!isProcessing) processBarcode(barcode);
+      enqueueBarcode(barcode);
     });
   }
+
+  // Serial port status
+  const serialStatus = await window.api.getSerialStatus();
+  updateSerialUI(serialStatus);
+
+  window.api.onSerialStatus((status) => updateSerialUI(status));
+
+  serialStatusEl.addEventListener('click', async () => {
+    serialText.textContent = '연결 중...';
+    const result = await window.api.serialReconnect();
+    if (!result.success) {
+      updateSerialUI({ connected: false, port: null });
+    }
+  });
 
   // Session expired listener
   window.api.onSessionExpired(() => {
@@ -107,7 +126,7 @@ barcodeInput.addEventListener('input', () => {
   debounceTimer = setTimeout(() => {
     const barcode = barcodeInput.value.trim();
     if (barcode.length >= 4) {
-      processBarcode(barcode);
+      enqueueBarcode(barcode);
     }
   }, 100);
 });
@@ -125,7 +144,7 @@ barcodeInput.addEventListener('keydown', (e) => {
     clearTimeout(debounceTimer);
     const barcode = barcodeInput.value.trim();
     if (barcode) {
-      processBarcode(barcode);
+      enqueueBarcode(barcode);
     }
   }
 });
@@ -135,16 +154,28 @@ document.addEventListener('click', () => {
   if (!isProcessing) barcodeInput.focus();
 });
 
+// 바코드 큐 처리
+function enqueueBarcode(rawBarcode) {
+  barcodeQueue.push(rawBarcode);
+  if (!queueProcessing) {
+    processQueue();
+  }
+}
+
+async function processQueue() {
+  if (queueProcessing || barcodeQueue.length === 0) return;
+  queueProcessing = true;
+
+  while (barcodeQueue.length > 0) {
+    const barcode = barcodeQueue.shift();
+    await processBarcode(barcode);
+  }
+
+  queueProcessing = false;
+}
+
 // Barcode processing
 async function processBarcode(rawBarcode) {
-  // Duplicate guard (same barcode within 1s)
-  const now = Date.now();
-  if (rawBarcode === lastProcessedBarcode && now - lastProcessedTime < 1000) {
-    barcodeInput.value = '';
-    return;
-  }
-  lastProcessedBarcode = rawBarcode;
-  lastProcessedTime = now;
   isProcessing = true;
 
   // Parse prefix
@@ -338,6 +369,21 @@ function speak(text) {
 if (window.speechSynthesis) {
   window.speechSynthesis.getVoices();
   window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+}
+
+// Serial UI
+function updateSerialUI(status) {
+  if (status.connected) {
+    serialDot.className = 'serial-dot connected';
+    const portList = status.ports ? status.ports.join(', ') : '';
+    const count = status.count || 0;
+    serialText.textContent = count > 1
+      ? `스캐너 ${count}대 연결 (${portList})`
+      : `스캐너 연결됨 (${portList})`;
+  } else {
+    serialDot.className = 'serial-dot disconnected';
+    serialText.textContent = '스캐너 미연결';
+  }
 }
 
 // Start
