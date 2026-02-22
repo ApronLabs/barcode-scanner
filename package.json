@@ -9,14 +9,17 @@
     "build": "electron-builder --win --mac",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
-    "build:dir": "electron-builder --dir"
+    "build:dir": "electron-builder --dir",
+    "rebuild": "electron-rebuild"
   },
   "dependencies": {
     "electron-store": "^8.1.0",
     "electron-updater": "^6.3.9",
-    "node-global-key-listener": "^0.3.0"
+    "node-global-key-listener": "^0.3.0",
+    "serialport": "^13.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "electron": "^28.3.3",
     "electron-builder": "^24.9.1"
   },
@@ -33,11 +36,17 @@
       "assets/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "**/node_modules/serialport/**",
+      "**/node_modules/@serialport/**"
+    ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -46,7 +55,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "assets/icon.png",

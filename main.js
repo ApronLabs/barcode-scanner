@@ -7,6 +7,8 @@
 
 const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { SerialPort } = require('serialport');
+const { ReadlineParser } = require('@serialport/parser-readline');
 const path = require('path');
 
 let Store = null;
@@ -83,6 +85,20 @@ let lastKeyTime = 0;
 let bufferTimeout = null;
 let fastKeyCount = 0;
 let keyListener = null;
+
+// ========================================
+// Serial Port - CH340 바코드 리더기
+// ========================================
+
+const SERIAL_CONFIG = {
+  BAUD_RATES: [9600, 115200],
+  CH340_VENDOR_ID: '1A86',
+  POLL_INTERVAL_MS: 5000,
+};
+
+// 다중 시리얼 포트 지원: { path: { port, parser } }
+const serialPorts = {};
+let serialPollTimer = null;
 
 function keyToChar(event) {
   const { name, state } = event;
@@ -162,6 +178,158 @@ function initGlobalKeyListener() {
     keyListener = null;
     return false;
   }
+}
+
+// ========================================
+// Serial Port Functions (다중 포트 지원)
+// ========================================
+
+function isCH340Port(p) {
+  const vid = (p.vendorId || '').toUpperCase();
+  const mfr = (p.manufacturer || '').toUpperCase();
+  const pnp = (p.pnpId || '').toUpperCase();
+  return vid === SERIAL_CONFIG.CH340_VENDOR_ID
+    || mfr.includes('CH340') || mfr.includes('WCH')
+    || pnp.includes('CH340') || pnp.includes('WCH');
+}
+
+async function findAllCH340Ports() {
+  try {
+    const ports = await SerialPort.list();
+    const all = ports.map(p => `${p.path}(${p.manufacturer || 'N/A'})`).join(', ');
+    console.log(`  [SERIAL] 전체 포트: ${all || '없음'}`);
+    return ports.filter(isCH340Port);
+  } catch (err) {
+    console.error('  [SERIAL] 포트 목록 조회 실패:', err.message);
+    return [];
+  }
+}
+
+function sendSerialStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const connectedPorts = Object.keys(serialPorts).filter(p => serialPorts[p].port && serialPorts[p].port.isOpen);
+  mainWindow.webContents.send('serial-status', {
+    connected: connectedPorts.length > 0,
+    ports: connectedPorts,
+    count: connectedPorts.length,
+  });
+}
+
+function tryOpenPort(portPath, baudRate) {
+  return new Promise((resolve) => {
+    try {
+      const port = new SerialPort({
+        path: portPath,
+        baudRate: baudRate,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        autoOpen: false,
+      });
+
+      const parser = port.pipe(new ReadlineParser({ delimiter: '\r' }));
+
+      parser.on('data', (data) => {
+        const barcode = data.trim();
+        if (barcode.length >= BARCODE_CONFIG.MIN_LENGTH) {
+          console.log(`  [SERIAL ${portPath}] 바코드 수신: ${barcode}`);
+          handleBarcodeDetected(barcode);
+        }
+      });
+
+      port.on('error', (err) => {
+        console.error(`  [SERIAL ${portPath}] 오류:`, err.message);
+      });
+
+      port.on('close', () => {
+        console.log(`  [SERIAL ${portPath}] 포트 닫힘`);
+        delete serialPorts[portPath];
+        sendSerialStatus();
+      });
+
+      port.open((err) => {
+        if (err) {
+          console.error(`  [SERIAL ${portPath}] 열기 실패 (${baudRate}):`, err.message);
+          resolve(null);
+        } else {
+          console.log(`  [SERIAL ${portPath}] 연결됨 @ ${baudRate} baud`);
+          resolve({ port, parser });
+        }
+      });
+    } catch (err) {
+      console.error(`  [SERIAL ${portPath}] 연결 오류:`, err.message);
+      resolve(null);
+    }
+  });
+}
+
+async function connectOnePort(portPath) {
+  if (serialPorts[portPath] && serialPorts[portPath].port && serialPorts[portPath].port.isOpen) {
+    return true;
+  }
+
+  for (const baudRate of SERIAL_CONFIG.BAUD_RATES) {
+    const result = await tryOpenPort(portPath, baudRate);
+    if (result) {
+      serialPorts[portPath] = result;
+      sendSerialStatus();
+      return true;
+    }
+  }
+  return false;
+}
+
+function closeOnePort(portPath) {
+  const entry = serialPorts[portPath];
+  if (entry && entry.port && entry.port.isOpen) {
+    try { entry.port.close(); } catch (e) { /* ignore */ }
+  }
+  delete serialPorts[portPath];
+}
+
+function closeAllSerialPorts() {
+  for (const portPath of Object.keys(serialPorts)) {
+    closeOnePort(portPath);
+  }
+}
+
+async function autoDetectAndConnect() {
+  try {
+    const availablePorts = await SerialPort.list();
+    const availablePaths = new Set(availablePorts.map(p => p.path));
+
+    // 분리된 포트 정리
+    for (const connectedPath of Object.keys(serialPorts)) {
+      if (!availablePaths.has(connectedPath)) {
+        console.log(`  [SERIAL ${connectedPath}] 장치 분리 감지`);
+        closeOnePort(connectedPath);
+        sendSerialStatus();
+      }
+    }
+
+    // 새 CH340 포트 연결
+    const ch340Ports = availablePorts.filter(isCH340Port);
+    for (const p of ch340Ports) {
+      if (!serialPorts[p.path]) {
+        await connectOnePort(p.path);
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+function startSerialPolling() {
+  autoDetectAndConnect();
+  serialPollTimer = setInterval(() => autoDetectAndConnect(), SERIAL_CONFIG.POLL_INTERVAL_MS);
+}
+
+function stopSerialPolling() {
+  if (serialPollTimer) {
+    clearInterval(serialPollTimer);
+    serialPollTimer = null;
+  }
+  closeAllSerialPorts();
 }
 
 // ========================================
@@ -300,6 +468,38 @@ ipcMain.handle('get-key-listener-status', () => {
   return { active: keyListener !== null };
 });
 
+// IPC: 시리얼 포트 상태
+ipcMain.handle('get-serial-status', () => {
+  const connectedPorts = Object.keys(serialPorts).filter(p => serialPorts[p].port && serialPorts[p].port.isOpen);
+  return {
+    connected: connectedPorts.length > 0,
+    ports: connectedPorts,
+    count: connectedPorts.length,
+  };
+});
+
+// IPC: 시리얼 포트 재연결
+ipcMain.handle('serial-reconnect', async () => {
+  closeAllSerialPorts();
+  await autoDetectAndConnect();
+  const connectedPorts = Object.keys(serialPorts);
+  return {
+    success: connectedPorts.length > 0,
+    ports: connectedPorts,
+    count: connectedPorts.length,
+  };
+});
+
+// IPC: 시리얼 포트 목록
+ipcMain.handle('list-serial-ports', async () => {
+  try {
+    const ports = await SerialPort.list();
+    return { success: true, ports };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+});
+
 // ========================================
 // Window & App Lifecycle
 // ========================================
@@ -332,6 +532,7 @@ app.whenReady().then(() => {
 
   createWindow();
   initGlobalKeyListener();
+  startSerialPolling();
 
   // Auto updater
   autoUpdater.autoDownload = false;
@@ -380,6 +581,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopSerialPolling();
   try {
     if (keyListener) {
       keyListener.kill();
@@ -392,6 +594,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopSerialPolling();
   try {
     if (keyListener) {
       keyListener.kill();
