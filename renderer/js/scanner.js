@@ -120,6 +120,14 @@ changeStoreBtn.addEventListener('click', () => {
   window.api.navigate('store-select');
 });
 
+// 매출 수집
+const crawlerBtn = document.getElementById('crawlerBtn');
+if (crawlerBtn) {
+  crawlerBtn.addEventListener('click', () => {
+    window.api.navigate('crawler');
+  });
+}
+
 // Barcode input handlers (works as fallback even when global key listener is active)
 barcodeInput.addEventListener('input', () => {
   clearTimeout(debounceTimer);

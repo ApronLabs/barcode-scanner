@@ -6,6 +6,7 @@ dist/
 
 # Environment (contains secrets)
 .env
+.env.local
 
 # OS files
 .DS_Store
@@ -19,3 +20,6 @@ Thumbs.db
 
 # Old backup (v2)
 old-backup/
+
+# Crawl result files
+crawl-result-*.json

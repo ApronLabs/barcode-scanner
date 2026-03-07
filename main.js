@@ -3,13 +3,35 @@
  *
  * EC2 API 연동 + 로그인 + 매장 선택 UI
  * Global Key Listener로 포커스 없이도 바코드 감지
+ * 매출 크롤러 (배민/요기요/쿠팡이츠) 통합
  */
 
+// sudo-prompt의 Node.util.isObject 호환 이슈 (node-global-key-listener 권한 설정)
+process.on('unhandledRejection', (reason) => {
+  const msg = String(reason);
+  if (msg.includes('isObject') || msg.includes('sudo-prompt')) return; // 무시
+  console.error('[unhandledRejection]', reason);
+});
+
+require('dotenv').config({ path: ['.env.local', '.env'] });
 const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 const path = require('path');
+const { Crawler } = require('./scripts/crawler');
+
+// 자동화 감지 우회: Electron/Chromium 플래그
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+app.commandLine.appendSwitch('disable-features', 'AutomationControllerForTesting,EnableAutomation');
+app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
+app.commandLine.appendSwitch('lang', 'ko-KR');
+app.commandLine.appendSwitch('accept-lang', 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7');
+
+// 크롤러 상태
+let crawler = null;
+let crawlResults = {};
+let crawlErrors = [];
 
 let Store = null;
 let store = null;
@@ -25,6 +47,10 @@ function initStore() {
         serverUrl: 'https://no-sim.co.kr',
       },
     });
+    // .env.local의 SERVER_URL이 있으면 store 값 강제 업데이트
+    if (process.env.SERVER_URL) {
+      store.set('serverUrl', process.env.SERVER_URL);
+    }
   }
   return store;
 }
@@ -386,7 +412,7 @@ ipcMain.handle('get-stores', async () => {
       return { success: false, message: '매장 목록 조회 실패' };
     }
     const data = await response.json();
-    return { success: true, stores: data.data || [] };
+    return { success: true, stores: data.data || [], role: data.role || 'staff' };
   } catch (err) {
     return { success: false, message: '서버 연결 실패: ' + err.message };
   }
@@ -441,11 +467,48 @@ ipcMain.handle('update-inventory', async (event, payload) => {
 // IPC: 화면 전환
 ipcMain.on('navigate', (event, page) => {
   if (!mainWindow) return;
+  // 크롤러 화면은 넓은 윈도우 필요
+  if (page === 'crawler') {
+    mainWindow.setSize(1200, 900);
+    mainWindow.center();
+  } else {
+    const [w] = mainWindow.getSize();
+    if (w > 800) {
+      mainWindow.setSize(700, 750);
+      mainWindow.center();
+    }
+  }
   const filePath = path.join(__dirname, 'renderer', `${page}.html`);
   mainWindow.loadFile(filePath);
 });
 
 // IPC: 설정 저장/조회
+// IPC: 로그인 정보 저장/불러오기 (30일 만료)
+const SAVED_LOGIN_TTL = 30 * 24 * 60 * 60 * 1000; // 30일
+
+ipcMain.handle('get-saved-login', () => {
+  const s = initStore();
+  const saved = s.get('savedLogin');
+  if (!saved) return null;
+  if (Date.now() - saved.savedAt > SAVED_LOGIN_TTL) {
+    s.delete('savedLogin');
+    return null;
+  }
+  return { email: saved.email, password: saved.password };
+});
+
+ipcMain.handle('save-login', (event, { email, password }) => {
+  const s = initStore();
+  s.set('savedLogin', { email, password, savedAt: Date.now() });
+  return { success: true };
+});
+
+ipcMain.handle('clear-saved-login', () => {
+  const s = initStore();
+  s.delete('savedLogin');
+  return { success: true };
+});
+
 ipcMain.handle('get-config', () => {
   const s = initStore();
   return {
@@ -501,6 +564,150 @@ ipcMain.handle('list-serial-ports', async () => {
 });
 
 // ========================================
+// Crawler IPC Handlers
+// ========================================
+
+const crawlSiteNames = { baemin: '배달의민족', yogiyo: '요기요', coupangeats: '쿠팡이츠' };
+const crawlStatusNames = {
+  starting: '시작...',
+  logging_in: '자동 로그인 중...',
+  crawling: '데이터 추출 중...',
+  manual_login_required: '하단 브라우저에서 직접 로그인하세요 (60초 대기)',
+};
+
+ipcMain.handle('trigger-crawl', async (_event, opts) => {
+  const { sites, credentials } = opts;
+  crawlResults = {};
+  crawlErrors = [];
+
+  if (crawler) crawler.destroy();
+  crawler = new Crawler(mainWindow, {
+    onStatus: (data) => {
+      const msg = `${crawlSiteNames[data.site] || data.site} ${data.page || ''} ${crawlStatusNames[data.status] || data.status}`;
+      try { mainWindow.webContents.send('status', msg); } catch {}
+      try { mainWindow.webContents.send('crawl-status', data); } catch {}
+      console.log('[crawler-status]', msg);
+    },
+    onResult: (data) => {
+      console.log('[crawler] 결과 수신:', data.site, data.pageType);
+      if (!crawlResults[data.site]) crawlResults[data.site] = {};
+      crawlResults[data.site][data.pageType || 'default'] = data;
+      try { mainWindow.webContents.send('crawl-result', data); } catch {}
+    },
+    onError: (data) => {
+      crawlErrors.push(data);
+      try { mainWindow.webContents.send('crawl-error', data); } catch {}
+    },
+    onComplete: (data) => {
+      try {
+        mainWindow.webContents.send('crawl-complete', {
+          results: crawlResults,
+          errors: crawlErrors,
+          ...data,
+        });
+      } catch {}
+      console.log('[crawler] 크롤링 완료');
+    },
+  });
+
+  try {
+    await crawler.start(sites || ['baemin', 'yogiyo', 'coupangeats'], credentials || {});
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-results', () => {
+  return { results: crawlResults, errors: crawlErrors };
+});
+
+ipcMain.handle('get-crawl-credentials', async (event, storeId) => {
+  const s = initStore();
+  const serverUrl = s.get('serverUrl');
+  const sid = storeId || s.get('lastStoreId') || '';
+  if (!sid) return null;
+  try {
+    const url = `${serverUrl}/api/suppliers/platform-accounts?storeId=${encodeURIComponent(sid)}&withCredentials=true`;
+    const { unauthorized, response } = await authenticatedFetch(url);
+    if (unauthorized) return null;
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.error('[crawl-credentials] GET error:', err.error);
+      return null;
+    }
+    const data = await response.json();
+    // platform-accounts 응답을 { baemin: { id, pw }, ... } 형태로 변환
+    const creds = {};
+    (data.data || []).forEach((p) => {
+      if (p.registered && p.loginId) {
+        creds[p.platform] = { id: p.loginId, pw: p.loginPassword || '' };
+      }
+    });
+    return creds;
+  } catch (err) {
+    console.error('[crawl-credentials] GET 실패:', err.message);
+    return null;
+  }
+});
+
+ipcMain.handle('save-crawl-credentials', async (event, credentials) => {
+  const s = initStore();
+  const serverUrl = s.get('serverUrl');
+  const sid = s.get('lastStoreId') || '';
+  if (!sid) return { success: false, error: '매장이 선택되지 않았습니다' };
+  try {
+    const platforms = Object.keys(credentials);
+    for (const platform of platforms) {
+      const { id, pw } = credentials[platform];
+      if (!id) continue;
+      const { unauthorized, response } = await authenticatedFetch(
+        `${serverUrl}/api/suppliers/platform-accounts`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storeId: sid,
+            platform,
+            loginId: id,
+            loginPassword: pw || '',
+          }),
+        }
+      );
+      if (unauthorized) return { success: false, error: '세션 만료' };
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        return { success: false, error: err.error || `${platform} 저장 실패` };
+      }
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('[crawl-credentials] save 실패:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('clear-results', () => {
+  crawlResults = {};
+  crawlErrors = [];
+  return { success: true };
+});
+
+// IPC: 크롤링 결과 JSON 파일 저장
+ipcMain.handle('save-crawl-json', async (_event, data) => {
+  const fs = require('fs');
+  const savePath = path.join(__dirname, `crawl-result-${new Date().toISOString().slice(0, 10)}.json`);
+  try {
+    fs.writeFileSync(savePath, JSON.stringify(data, null, 2), 'utf8');
+    console.log('[crawler] JSON 저장:', savePath);
+    return { success: true, path: savePath };
+  } catch (err) {
+    console.error('[crawler] JSON 저장 실패:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// ========================================
 // Window & App Lifecycle
 // ========================================
 
@@ -525,7 +732,7 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('========================================');
   console.log('  매출지킴이 바코드 스캐너 v' + app.getVersion());
   console.log('========================================');
@@ -581,6 +788,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (crawler) crawler.destroy();
   stopSerialPolling();
   try {
     if (keyListener) {
@@ -594,6 +802,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (crawler) crawler.destroy();
   stopSerialPolling();
   try {
     if (keyListener) {
