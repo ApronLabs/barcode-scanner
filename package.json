@@ -1,6 +1,6 @@
 {
   "name": "barcode-scanner",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "매출지킴이 바코드 스캐너",
   "main": "main.js",
   "author": "Semicolon Dev Team",
@@ -13,15 +13,17 @@
     "rebuild": "electron-rebuild"
   },
   "dependencies": {
+    "dotenv": "~17.3.1",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.3.9",
     "node-global-key-listener": "^0.3.0",
+    "rebrowser-puppeteer-core": "^24.8.1",
     "serialport": "^13.0.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
-    "electron": "^28.3.3",
-    "electron-builder": "^24.9.1"
+    "electron": "~40.6.1",
+    "electron-builder": "~25.1.8"
   },
   "build": {
     "appId": "com.semicolon.barcode-scanner",
@@ -33,6 +35,7 @@
       "main.js",
       "preload.js",
       "renderer/**/*",
+      "scripts/**/*",
       "assets/**/*",
       "package.json"
     ],

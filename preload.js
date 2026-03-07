@@ -15,4 +15,22 @@ contextBridge.exposeInMainWorld('api', {
   onBarcodeScanned: (callback) => ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode)),
   onSerialStatus: (callback) => ipcRenderer.on('serial-status', (_, status) => callback(status)),
   onSessionExpired: (callback) => ipcRenderer.on('session-expired', () => callback()),
+  getSavedLogin: () => ipcRenderer.invoke('get-saved-login'),
+  saveLogin: (email, password) => ipcRenderer.invoke('save-login', { email, password }),
+  clearSavedLogin: () => ipcRenderer.invoke('clear-saved-login'),
+});
+
+// 크롤러 API
+contextBridge.exposeInMainWorld('crawler', {
+  triggerCrawl: (opts) => ipcRenderer.invoke('trigger-crawl', opts),
+  getResults: () => ipcRenderer.invoke('get-results'),
+  clearResults: () => ipcRenderer.invoke('clear-results'),
+  getCredentials: (storeId) => ipcRenderer.invoke('get-crawl-credentials', storeId),
+  saveCredentials: (creds) => ipcRenderer.invoke('save-crawl-credentials', creds),
+  onStatus: (callback) => ipcRenderer.on('status', (_, msg) => callback(msg)),
+  onCrawlStatus: (callback) => ipcRenderer.on('crawl-status', (_, data) => callback(data)),
+  onCrawlResult: (callback) => ipcRenderer.on('crawl-result', (_, data) => callback(data)),
+  onCrawlError: (callback) => ipcRenderer.on('crawl-error', (_, data) => callback(data)),
+  onCrawlComplete: (callback) => ipcRenderer.on('crawl-complete', (_, data) => callback(data)),
+  saveCrawlJson: (data) => ipcRenderer.invoke('save-crawl-json', data),
 });

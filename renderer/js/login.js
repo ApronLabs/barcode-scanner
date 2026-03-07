@@ -2,6 +2,7 @@ const emailInput = document.getElementById('emailInput');
 const passwordInput = document.getElementById('passwordInput');
 const loginBtn = document.getElementById('loginBtn');
 const errorMsg = document.getElementById('errorMsg');
+const rememberCheck = document.getElementById('rememberCheck');
 
 function showError(msg) {
   errorMsg.textContent = msg;
@@ -29,6 +30,12 @@ async function handleLogin() {
   const result = await window.api.login(email, password);
 
   if (result.success) {
+    // 로그인 성공 시 저장 처리
+    if (rememberCheck.checked) {
+      await window.api.saveLogin(email, password);
+    } else {
+      await window.api.clearSavedLogin();
+    }
     window.api.navigate('store-select');
   } else {
     showError(result.message);
@@ -46,3 +53,13 @@ passwordInput.addEventListener('keydown', (e) => {
 emailInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') passwordInput.focus();
 });
+
+// 저장된 로그인 정보 불러오기
+(async () => {
+  const saved = await window.api.getSavedLogin();
+  if (saved) {
+    emailInput.value = saved.email;
+    passwordInput.value = saved.password;
+    rememberCheck.checked = true;
+  }
+})();
