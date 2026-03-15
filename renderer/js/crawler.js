@@ -3,7 +3,7 @@ const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
 const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요' };
 const PAGE_NAMES = {
   orderHistory: '주문내역', orders: '주문내역', settlement: '정산',
-  billing: '정산', sales: '매출', generic: '전체',
+  billing: '정산', sales: '매출', generic: '전체', default: '주문내역',
 };
 
 let allResults = {};
@@ -321,9 +321,9 @@ function renderShopContent(site, shopData, orders) {
   let totalAmount = 0;
   let totalSettlement = 0;
   orders.forEach(o => {
-    const amt = o.menuAmount || o.totalPayment || 0;
+    const amt = o.salePrice || o.menuAmount || o.totalPayment || o.amount || 0;
     totalAmount += amt;
-    totalSettlement += (o.settlementAmount || 0);
+    totalSettlement += (o.actuallyAmount || o.settlementAmount || 0);
   });
 
   let html = '<div class="shop-summary">';
@@ -395,39 +395,53 @@ function normalizeForDisplay(data) {
     return null;
   }
 
-  // 쿠팡이츠: parseOrder()에서 DB SalesOrder 필드로 이미 매핑됨
+  // 쿠팡이츠: XHR API 데이터 (settlement 객체 포함)
   if (site === 'coupangeats') {
-    if (data.orders?.length > 0) {
-      return data.orders.map(o => ({
-        date: o.orderedAt ? formatDateTime(o.orderedAt) : '',
-        orderNo: o.orderId || '',
-        orderSummary: o.menuSummary || '',
-        amount: o.totalPayment || 0,
-        commissionFee: o.commissionFee || 0,
-        pgFee: o.pgFee || 0,
-        deliveryCost: o.deliveryCost || 0,
-        adFee: o.adFee || 0,
-        vat: o.vat || 0,
-        storeDiscount: o.storeDiscount || 0,
-        instantDiscount: o.instantDiscount || 0,
-        cupDeposit: o.cupDeposit || 0,
-        favorableFee: o.favorableFee || 0,
-        settlementAmount: o.settlementAmount || 0,
-        settlementDate: o.settlementDate || '',
-      }));
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => {
+        // DOM 스크래핑 형식: date+time / API 형식: orderedAt
+        let dateStr = '';
+        if (o.orderedAt) {
+          dateStr = formatDateTime(o.orderedAt);
+        } else if (o.date && o.time) {
+          dateStr = o.time;
+        } else if (o.date) {
+          dateStr = o.date;
+        }
+
+        // settlement 객체에서 정산 상세 추출
+        const s = o.settlement || {};
+
+        return {
+          date: dateStr,
+          orderNo: o.orderId || '',
+          orderSummary: o.menuSummary || '',
+          amount: o.salePrice || o.totalPayment || o.amount || 0,
+          commissionFee: s.serviceSupplyPrice || o.commissionFee || 0,
+          pgFee: s.paymentSupplyPrice || o.pgFee || 0,
+          deliveryCost: s.deliverySupplyPrice || o.deliveryCost || 0,
+          adFee: s.advertisingSupplyPrice || o.adFee || 0,
+          storeDiscount: s.storePromotionAmount || o.storeDiscount || 0,
+          settlementAmount: o.actuallyAmount || o.settlementAmount || 0,
+          settlementDate: s.settlementDueDate || o.settlementDate || o.settlementStatus || '',
+        };
+      });
     }
     return null;
   }
 
-  // 땡겨요: API 인터셉트 데이터 (requestQryOrderList)
+  // 땡겨요: API 인터셉트 데이터
   if (site === 'ddangyoyo') {
-    if (data.apiOrders?.length > 0) {
-      return data.apiOrders.map(o => ({
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => ({
         date: o.orderedAt ? formatDateTime(o.orderedAt) : '',
         orderNo: o.orderId || '',
         orderSummary: o.menuSummary || '',
         amount: o.menuAmount || 0,
         channel: o.channel || '',
+        commissionFee: o.totalFee || 0,
         settlementAmount: o.settlementAmount || 0,
       }));
     }

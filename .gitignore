@@ -23,3 +23,5 @@ old-backup/
 
 # Crawl result files
 crawl-result-*.json
+*.log.txt
+poc-*-log.txt

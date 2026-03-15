@@ -9,13 +9,13 @@ const { Crawler } = require('./crawler');
 class AutoCrawlScheduler {
   /**
    * @param {object} opts
-   * @param {Electron.BrowserWindow} opts.mainWindow
+   * @param {Electron.BrowserWindow} [opts.mainWindow] - UI 알림용 (선택)
    * @param {object} opts.store - electron-store 인스턴스
    * @param {Function} opts.authenticatedFetch - main.js의 authenticatedFetch 함수
    * @param {Function} opts.getCredentials - 플랫폼 계정 가져오기 함수
    */
   constructor({ mainWindow, store, authenticatedFetch, getCredentials }) {
-    this.mainWindow = mainWindow;
+    this.mainWindow = mainWindow || null;
     this.store = store;
     this.authenticatedFetch = authenticatedFetch;
     this.getCredentials = getCredentials;
@@ -225,7 +225,15 @@ class AutoCrawlScheduler {
       console.log('[scheduler] 백필 불필요 — 모든 플랫폼 60일 데이터 수집 완료');
     }
 
-    // 8. 어제 데이터 daily 크롤링
+    // 8. 어제 데이터 daily 크롤링 — 백필이 실행됐으면 어제 데이터도 포함되어 있으므로 건너뜀
+    if (needBackfillSites.length > 0) {
+      console.log('[scheduler] 백필에서 어제 데이터 포함 수집 완료 — daily 건너뜀');
+      this.store.set('schedulerLastRunDate', this._getKstToday());
+      onComplete({ type: 'backfill-and-daily-done', platforms: availableSources });
+      console.log('[scheduler] runBackfillAndDaily 완료');
+      return { success: true, mode: 'backfill' };
+    }
+
     const needDailySites = availableSources.filter(src => {
       const synced = syncedDates[src] || [];
       return !synced.includes(yesterday);
@@ -297,7 +305,7 @@ class AutoCrawlScheduler {
       },
     };
 
-    const crawler = new Crawler(this.mainWindow, {
+    const crawler = new Crawler({
       onStatus: (msg) => console.log(`[scheduler:crawl] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`),
       onResult: (data) => console.log(`[scheduler:crawl] 결과: ${data?.site || JSON.stringify(data)}`),
       onError: (data) => console.error(`[scheduler:crawl] 오류: ${data?.site} — ${data?.error}`),
@@ -321,7 +329,7 @@ class AutoCrawlScheduler {
       ...(targetDate ? { targetDate } : {}),
     };
 
-    const crawler = new Crawler(this.mainWindow, {
+    const crawler = new Crawler({
       onStatus: (msg) => {
         console.log(`[scheduler:crawl] ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`);
         onStatus(msg);
