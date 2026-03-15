@@ -46,6 +46,17 @@
 
     .cred-status { font-size: 12px; margin-top: 4px; min-height: 18px; }
 
+    /* 스케줄러 상태 */
+    .scheduler-row { display: flex; align-items: center; gap: 10px; }
+    .scheduler-dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex-shrink: 0; }
+    .scheduler-dot.active { background: #10b981; }
+    .scheduler-info { font-size: 12px; color: #6b7280; }
+    .scheduler-info strong { color: #374151; }
+    .backfill-bar { margin-top: 8px; }
+    .backfill-bar-bg { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+    .backfill-bar-fill { height: 100%; background: #3b82f6; border-radius: 3px; transition: width 0.3s; }
+    .backfill-text { font-size: 11px; color: #6b7280; margin-top: 4px; }
+
     #status { font-size: 13px; color: #666; text-align: center; margin-bottom: 12px; min-height: 20px; }
 
     .btn-group { display: flex; gap: 10px; margin-bottom: 16px; }
@@ -130,16 +141,29 @@
   </div>
 
   <div class="card">
+    <h2>자동 수집 스케줄</h2>
+    <div class="scheduler-row">
+      <div class="scheduler-dot" id="schedulerDot"></div>
+      <div class="scheduler-info" id="schedulerInfo">확인 중...</div>
+    </div>
+    <div class="backfill-bar" id="backfillArea" style="display:none;">
+      <div class="backfill-bar-bg"><div class="backfill-bar-fill" id="backfillFill" style="width:0%"></div></div>
+      <div class="backfill-text" id="backfillText"></div>
+    </div>
+  </div>
+
+  <div class="card">
     <div id="status"></div>
     <div class="btn-group">
-      <button class="btn-start" id="btnAutoCrawl">자동 크롤링 시작</button>
+      <button class="btn-start" id="btnAutoCrawl">수동 크롤링 시작</button>
     </div>
 
     <div class="guide">
-      <p><strong>자동 크롤링</strong>: 계정이 등록된 플랫폼만 자동 수집됩니다</p>
+      <p><strong>수동 크롤링</strong>: 계정이 등록된 플랫폼만 수집됩니다. 자동 수집은 매일 오전 11시에 실행됩니다.</p>
     </div>
 
     <div class="btn-group">
+      <button class="btn-secondary" id="btnExportExcel">엑셀 내보내기</button>
       <button class="btn-secondary" id="btnExport">JSON 내보내기</button>
       <button class="btn-danger" id="btnClear">초기화</button>
     </div>

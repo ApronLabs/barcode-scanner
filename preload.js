@@ -33,4 +33,8 @@ contextBridge.exposeInMainWorld('crawler', {
   onCrawlError: (callback) => ipcRenderer.on('crawl-error', (_, data) => callback(data)),
   onCrawlComplete: (callback) => ipcRenderer.on('crawl-complete', (_, data) => callback(data)),
   saveCrawlJson: (data) => ipcRenderer.invoke('save-crawl-json', data),
+  exportExcel: (data) => ipcRenderer.invoke('export-excel', data),
+  getSchedulerStatus: () => ipcRenderer.invoke('get-scheduler-status'),
+  triggerBackfill: () => ipcRenderer.invoke('trigger-backfill'),
+  onSchedulerUpdate: (callback) => ipcRenderer.on('scheduler-update', (_, data) => callback(data)),
 });

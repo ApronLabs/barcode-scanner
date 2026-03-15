@@ -12,7 +12,19 @@ class CoupangeatsCrawler {
     this.onStatus = onStatus || (() => {});
   }
 
-  run(id, pw) {
+  /**
+   * @param {string} id - 쿠팡이츠 로그인 ID
+   * @param {string} pw - 쿠팡이츠 비밀번호
+   * @param {object} [options] - 추가 옵션
+   * @param {string} [options.targetDate] - 크롤링 대상 날짜 (YYYY-MM-DD, 미지정 시 어제)
+   * @param {string} [options.brandName] - 브랜드명
+   * @param {string} [options.mode] - 크롤링 모드 ('backfill': 3개월 프리셋 선택 후 날짜별 그룹핑 전송)
+   * @param {object} [options.salesKeeper] - 매출지킴이 전송 설정
+   * @param {string} [options.salesKeeper.apiBaseUrl] - 매출지킴이 API 베이스 URL
+   * @param {string} [options.salesKeeper.sessionToken] - 세션 토큰
+   * @param {string} [options.salesKeeper.salesKeeperStoreId] - 매출지킴이 매장 ID
+   */
+  run(id, pw, options = {}) {
     return new Promise((resolve, reject) => {
       const workerPath = path.join(__dirname, 'coupangeats-worker.js');
       const results = {};
@@ -107,7 +119,14 @@ class CoupangeatsCrawler {
       // 워커에 설정 전송
       this.worker.send({
         type: 'start',
-        config: { id, pw },
+        config: {
+          id,
+          pw,
+          targetDate: options.targetDate,
+          brandName: options.brandName,
+          mode: options.mode,
+          salesKeeper: options.salesKeeper,
+        },
       });
     });
   }

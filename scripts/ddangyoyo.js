@@ -11,7 +11,16 @@ class DdangyoyoCrawler {
     this.onStatus = onStatus || (() => {});
   }
 
-  run(id, pw) {
+  /**
+   * @param {string} id - 땡겨요 로그인 ID
+   * @param {string} pw - 땡겨요 비밀번호
+   * @param {object} [options] - 추가 옵션
+   * @param {string} [options.targetDate] - 크롤링 대상 날짜 (YYYY-MM-DD)
+   * @param {string} [options.brandName] - 브랜드명
+   * @param {object} [options.salesKeeper] - 매출지킴이 전송 설정
+   * @param {string} [options.mode] - 실행 모드 ('backfill': 90일 백필)
+   */
+  run(id, pw, options = {}) {
     return new Promise((resolve, reject) => {
       const workerPath = path.join(__dirname, 'ddangyoyo-worker.js');
       const results = {};
@@ -92,7 +101,14 @@ class DdangyoyoCrawler {
 
       this.worker.send({
         type: 'start',
-        config: { id, pw },
+        config: {
+          id,
+          pw,
+          targetDate: options.targetDate,
+          brandName: options.brandName,
+          salesKeeper: options.salesKeeper,
+          mode: options.mode,
+        },
       });
     });
   }
