@@ -136,7 +136,7 @@ class AutoCrawlScheduler {
       console.error('[scheduler] sync-status 실패:', err.message, '— fallback (어제만 크롤링)');
     }
 
-    const allSources = options.sites || ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
+    const allSources = options.sites || ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
     const availableSources = allSources.filter(src => credentials[src]?.id);
     if (availableSources.length === 0) {
       const msg = '등록된 플랫폼 계정이 없습니다';
@@ -355,7 +355,7 @@ class AutoCrawlScheduler {
   // ─── Sync Status API 호출 ───
   async _checkSyncStatus(storeId, startDate, endDate) {
     const serverUrl = this.store.get('serverUrl');
-    const sources = 'baemin,yogiyo,coupangeats,ddangyoyo';
+    const sources = 'baemin,yogiyo,coupangeats,ddangyoyo,okpos';
     const url = `${serverUrl}/api/stores/${encodeURIComponent(storeId)}/crawler/sync-status?sources=${sources}&startDate=${startDate}&endDate=${endDate}`;
 
     try {

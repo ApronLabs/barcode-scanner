@@ -103,7 +103,7 @@
     <button class="back-btn" id="backBtn">← 뒤로</button>
     <div>
       <h1>매출 크롤러</h1>
-      <p class="subtitle">배민 / 요기요 / 쿠팡이츠 / 땡겨요 매출 자동 수집</p>
+      <p class="subtitle">배민 / 요기요 / 쿠팡이츠 / 땡겨요 / OKPOS 매출 자동 수집</p>
     </div>
   </div>
 
@@ -145,6 +145,15 @@
         <input type="text" id="cred-ddangyoyo-id" placeholder="아이디" readonly>
         <input type="password" id="cred-ddangyoyo-pw" placeholder="비밀번호" readonly>
         <span class="platform-badge badge-inactive" id="badge-ddangyoyo">미등록</span>
+      </div>
+      <div class="platform-card disabled" id="card-okpos" data-site="okpos">
+        <div class="platform-header">
+          <span class="platform-name">OKPOS</span>
+          <button class="platform-edit-btn" data-site="okpos">수정</button>
+        </div>
+        <input type="text" id="cred-okpos-id" placeholder="아이디" readonly>
+        <input type="password" id="cred-okpos-pw" placeholder="비밀번호" readonly>
+        <span class="platform-badge badge-inactive" id="badge-okpos">미등록</span>
       </div>
     </div>
     <div class="cred-status" id="credStatus"></div>

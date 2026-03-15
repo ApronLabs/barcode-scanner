@@ -1,9 +1,10 @@
-const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
-const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
-const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요' };
+const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
+const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
+const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요', okpos: 'OKPOS' };
 const PAGE_NAMES = {
   orderHistory: '주문내역', orders: '주문내역', settlement: '정산',
   billing: '정산', sales: '매출', generic: '전체', default: '주문내역',
+  okpos: '매출',
 };
 
 let allResults = {};
@@ -320,17 +321,21 @@ function renderShopContent(site, shopData, orders) {
   // 요약 카드
   let totalAmount = 0;
   let totalSettlement = 0;
+  let totalReceiptCount = 0;
   orders.forEach(o => {
     const amt = o.salePrice || o.menuAmount || o.totalPayment || o.amount || 0;
     totalAmount += amt;
     totalSettlement += (o.actuallyAmount || o.settlementAmount || 0);
+    if (o.receiptCount) totalReceiptCount += o.receiptCount;
   });
 
+  const isOkpos = site === 'okpos';
+
   let html = '<div class="shop-summary">';
-  html += `<div class="shop-summary-item"><div class="shop-summary-label">주문 건수</div><div class="shop-summary-value">${orders.length}건</div></div>`;
+  html += `<div class="shop-summary-item"><div class="shop-summary-label">${isOkpos ? '영수건수' : '주문 건수'}</div><div class="shop-summary-value">${isOkpos ? totalReceiptCount : orders.length}건</div></div>`;
   html += `<div class="shop-summary-item"><div class="shop-summary-label">총 매출</div><div class="shop-summary-value">${totalAmount.toLocaleString()}원</div></div>`;
   if (totalSettlement > 0) {
-    html += `<div class="shop-summary-item"><div class="shop-summary-label">정산 예정</div><div class="shop-summary-value" style="color:#2563eb;">${totalSettlement.toLocaleString()}원</div></div>`;
+    html += `<div class="shop-summary-item"><div class="shop-summary-label">${isOkpos ? '실매출' : '정산 예정'}</div><div class="shop-summary-value" style="color:#2563eb;">${totalSettlement.toLocaleString()}원</div></div>`;
   }
   html += '</div>';
 
@@ -443,6 +448,29 @@ function normalizeForDisplay(data) {
         channel: o.channel || '',
         commissionFee: o.totalFee || 0,
         settlementAmount: o.settlementAmount || 0,
+      }));
+    }
+    return null;
+  }
+
+  // OKPOS: POS 매출 데이터
+  if (site === 'okpos') {
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => ({
+        date: o.date || '',
+        orderNo: '',
+        orderSummary: `영수 ${o.receiptCount || 0}건`,
+        amount: o.totalSaleAmount || 0,
+        commissionFee: 0,
+        pgFee: 0,
+        deliveryCost: 0,
+        settlementAmount: o.netSaleAmount || 0,
+        settlementDate: o.date || '',
+        // POS 전용
+        cardAmount: o.cardAmount || 0,
+        cashAmount: o.cashAmount || 0,
+        vatAmount: o.vatAmount || 0,
       }));
     }
     return null;
