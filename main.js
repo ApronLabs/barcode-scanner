@@ -739,10 +739,80 @@ ipcMain.handle('export-excel', async (_event, data) => {
 
   const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요' };
 
+  // 플랫폼별 주문 → 엑셀 행 변환
+  function orderToRow(site, o) {
+    if (site === 'baemin') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.channel || '',
+        '결제': o.paymentMethod || '',
+        '배달팁': o.deliveryTip || 0,
+        '즉시할인': o.instantDiscount || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '부가세': o.vat || 0,
+        '만나서결제': o.meetPayment || 0,
+        '플랫폼할인': o.platformDiscount || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'yogiyo') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.channel || '',
+        '결제': o.paymentMethod || '',
+        '배달비수입': o.deliveryIncome || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '광고비': o.adFee || 0,
+        '부가세': o.vat || 0,
+        '가게할인': o.storeDiscount || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'coupangeats') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.totalPayment || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '광고비': o.adFee || 0,
+        '부가세': o.vat || 0,
+        '가게할인': o.storeDiscount || 0,
+        '즉시할인': o.instantDiscount || 0,
+        '일회용컵': o.cupDeposit || 0,
+        '우대수수료': o.favorableFee || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'ddangyoyo') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.orderType || '',
+        '정산예정': o.settlementAmount || 0,
+      };
+    }
+    return { ...o };
+  }
+
   try {
     const { filePath } = await dialog.showSaveDialog(mainWindow, {
       title: '엑셀 내보내기',
-      defaultPath: `매출데이터-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      defaultPath: `매출데이터_${new Date().toISOString().slice(0, 10)}.xlsx`,
       filters: [{ name: 'Excel', extensions: ['xlsx'] }],
     });
     if (!filePath) return { success: false, cancelled: true };
@@ -750,93 +820,53 @@ ipcMain.handle('export-excel', async (_event, data) => {
     const wb = XLSX.utils.book_new();
     const results = data.results || {};
 
+    // 매장별로 데이터 수집: { shopName: [{ 플랫폼, ...orderRow }] }
+    const shopMap = {};
+
     for (const [site, pages] of Object.entries(results)) {
       for (const [pageKey, pageData] of Object.entries(pages)) {
         if (pageKey === 'salesKeeper') continue;
         const siteName = SITE_NAMES[site] || site;
-        const orders = pageData.apiOrders || pageData.orders || [];
-        if (orders.length === 0) continue;
 
-        let rows;
-        if (site === 'baemin') {
-          rows = orders.map(o => ({
-            '주문일': o.orderedAt || '',
-            '주문번호': o.orderId || '',
-            '주문내역': o.menuSummary || '',
-            '매출액': o.menuAmount || 0,
-            '유형': o.channel || '',
-            '결제': o.paymentMethod || '',
-            '배달팁': o.deliveryTip || 0,
-            '즉시할인': o.instantDiscount || 0,
-            '중개이용료': o.commissionFee || 0,
-            '결제수수료': o.pgFee || 0,
-            '배달비': o.deliveryCost || 0,
-            '부가세': o.vat || 0,
-            '만나서결제': o.meetPayment || 0,
-            '플랫폼할인': o.platformDiscount || 0,
-            '정산예정': o.settlementAmount || 0,
-            '정산일': o.settlementDate || '',
-          }));
-        } else if (site === 'yogiyo') {
-          rows = orders.map(o => ({
-            '주문일': o.orderedAt || '',
-            '주문번호': o.orderId || '',
-            '주문내역': o.menuSummary || '',
-            '매출액': o.menuAmount || 0,
-            '유형': o.channel || '',
-            '결제': o.paymentMethod || '',
-            '배달비수입': o.deliveryIncome || 0,
-            '중개이용료': o.commissionFee || 0,
-            '결제수수료': o.pgFee || 0,
-            '배달비': o.deliveryCost || 0,
-            '광고비': o.adFee || 0,
-            '부가세': o.vat || 0,
-            '가게할인': o.storeDiscount || 0,
-            '정산예정': o.settlementAmount || 0,
-            '정산일': o.settlementDate || '',
-          }));
-        } else if (site === 'coupangeats') {
-          rows = orders.map(o => ({
-            '주문일': o.orderedAt || '',
-            '주문번호': o.orderId || '',
-            '주문내역': o.menuSummary || '',
-            '매출액': o.totalPayment || 0,
-            '중개이용료': o.commissionFee || 0,
-            '결제수수료': o.pgFee || 0,
-            '배달비': o.deliveryCost || 0,
-            '광고비': o.adFee || 0,
-            '부가세': o.vat || 0,
-            '가게할인': o.storeDiscount || 0,
-            '즉시할인': o.instantDiscount || 0,
-            '일회용컵': o.cupDeposit || 0,
-            '우대수수료': o.favorableFee || 0,
-            '정산예정': o.settlementAmount || 0,
-            '정산일': o.settlementDate || '',
-          }));
-        } else if (site === 'ddangyoyo') {
-          rows = orders.map(o => ({
-            '주문일': o.orderedAt || '',
-            '주문번호': o.orderId || '',
-            '주문내역': o.menuSummary || '',
-            '매출액': o.menuAmount || 0,
-            '유형': o.orderType || '',
-            '정산예정': o.settlementAmount || 0,
-          }));
+        // shops 배열이 있으면 매장별로 분리
+        if (pageData.shops && pageData.shops.length > 0) {
+          for (const shop of pageData.shops) {
+            const shopName = shop.shopName || siteName;
+            if (!shopMap[shopName]) shopMap[shopName] = [];
+            (shop.orders || []).forEach(o => {
+              shopMap[shopName].push({ '플랫폼': siteName, ...orderToRow(site, o) });
+            });
+          }
         } else {
-          rows = orders.map(o => ({ ...o }));
+          // 기존 호환: shops 없으면 플랫폼명을 매장명으로
+          const orders = pageData.apiOrders || pageData.orders || [];
+          if (orders.length === 0) continue;
+          // 매장 구분 없으면 '전체'로 묶음
+          const shopName = '전체';
+          if (!shopMap[shopName]) shopMap[shopName] = [];
+          orders.forEach(o => {
+            shopMap[shopName].push({ '플랫폼': siteName, ...orderToRow(site, o) });
+          });
         }
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-
-        // 컬럼 너비 자동 조절
-        const colWidths = Object.keys(rows[0] || {}).map(key => {
-          const maxLen = Math.max(key.length, ...rows.map(r => String(r[key] || '').length));
-          return { wch: Math.min(Math.max(maxLen + 2, 8), 30) };
-        });
-        ws['!cols'] = colWidths;
-
-        XLSX.utils.book_append_sheet(wb, ws, siteName);
       }
+    }
+
+    // 시트 생성: 매장별 시트
+    for (const [shopName, rows] of Object.entries(shopMap)) {
+      if (rows.length === 0) continue;
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+
+      // 컬럼 너비 자동 조절
+      const colWidths = Object.keys(rows[0] || {}).map(key => {
+        const maxLen = Math.max(key.length, ...rows.map(r => String(r[key] || '').length));
+        return { wch: Math.min(Math.max(maxLen + 2, 8), 30) };
+      });
+      ws['!cols'] = colWidths;
+
+      // 시트명은 31자 제한 (Excel 제한)
+      const sheetName = shopName.substring(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
     }
 
     if (wb.SheetNames.length === 0) {

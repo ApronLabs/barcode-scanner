@@ -18,7 +18,7 @@ class CoupangeatsCrawler {
    * @param {object} [options] - 추가 옵션
    * @param {string} [options.targetDate] - 크롤링 대상 날짜 (YYYY-MM-DD, 미지정 시 어제)
    * @param {string} [options.brandName] - 브랜드명
-   * @param {string} [options.mode] - 크롤링 모드 ('backfill': 3개월 프리셋 선택 후 날짜별 그룹핑 전송)
+   * @param {string} [options.mode] - 크롤링 모드 ('backfill': 2달 기간 DOM 스크래핑, 매장별 수집 후 날짜별 그룹핑 전송)
    * @param {object} [options.salesKeeper] - 매출지킴이 전송 설정
    * @param {string} [options.salesKeeper.apiBaseUrl] - 매출지킴이 API 베이스 URL
    * @param {string} [options.salesKeeper.sessionToken] - 세션 토큰

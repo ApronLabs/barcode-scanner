@@ -8,6 +8,7 @@ const PAGE_NAMES = {
 
 let allResults = {};
 let activeTab = null;
+let activeShopTab = {}; // { 'baemin-orderHistory': 'shopName' }
 
 // ── 플랫폼 카드 상태 업데이트 ──
 function updatePlatformCard(site) {
@@ -102,6 +103,7 @@ document.getElementById('btnAutoCrawl').addEventListener('click', async () => {
 
   allResults = {};
   activeTab = null;
+  activeShopTab = {};
   document.getElementById('result-area').style.display = 'none';
 
   // 계정이 등록된 크롤링 대상만 필터
@@ -208,6 +210,22 @@ window.crawler.onCrawlError((data) => {
   document.getElementById('status').textContent = `[${data.site}${data.page ? '/' + data.page : ''}] ${data.error}`;
 });
 
+// ── 데이터에서 매장별 주문 추출 ──
+function extractShops(data) {
+  // shops 배열이 있으면 그대로 사용
+  if (data.shops && data.shops.length > 0) {
+    return data.shops.map(shop => ({
+      shopName: shop.shopName || '매장',
+      shopId: shop.shopId || '',
+      orders: shop.orders || [],
+    }));
+  }
+  // shops가 없으면 기존 apiOrders/orders를 단일 매장으로 묶음
+  const orders = data.apiOrders || data.orders || [];
+  if (orders.length === 0) return [];
+  return [{ shopName: '', shopId: '', orders }];
+}
+
 // ── 결과 렌더링 ──
 function renderResults() {
   const area = document.getElementById('result-area');
@@ -217,10 +235,10 @@ function renderResults() {
   const tabs = [];
   for (const [site, pages] of Object.entries(allResults)) {
     for (const [page, data] of Object.entries(pages)) {
-      if (page === 'salesKeeper') continue; // salesKeeper 결과는 탭에 표시하지 않음
+      if (page === 'salesKeeper') continue;
       const siteName = SITE_NAMES[site] || site;
       const pageName = PAGE_NAMES[page] || page;
-      tabs.push({ key: `${site}-${page}`, label: `${siteName} ${pageName}`, data });
+      tabs.push({ key: `${site}-${page}`, label: `${siteName} ${pageName}`, site, data });
     }
   }
 
@@ -238,7 +256,87 @@ function renderResults() {
   });
 
   const current = tabs.find(t => t.key === activeTab);
-  if (current) contentEl.innerHTML = renderData(current.data);
+  if (current) {
+    contentEl.innerHTML = renderDataWithShops(current.key, current.site, current.data);
+    // 매장 서브탭 이벤트 바인딩
+    contentEl.querySelectorAll('.shop-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        activeShopTab[current.key] = tab.dataset.shop;
+        renderResults();
+      });
+    });
+  }
+}
+
+// ── 매장별 서브탭 포함 렌더링 ──
+function renderDataWithShops(tabKey, site, data) {
+  const shops = extractShops(data);
+
+  // 매장이 없으면 기존 방식으로 렌더
+  if (shops.length === 0) {
+    return renderData(data);
+  }
+
+  // 매장이 1개이고 이름이 없으면 서브탭 없이 바로 테이블
+  if (shops.length === 1 && !shops[0].shopName) {
+    return renderData(data);
+  }
+
+  // 매장이 1개이고 이름이 있어도 서브탭 없이 바로 테이블 (매장명만 표시)
+  if (shops.length === 1) {
+    const shop = shops[0];
+    const shopData = { ...data, apiOrders: shop.orders, orders: shop.orders };
+    let html = `<div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;">${escapeHtml(shop.shopName)}</div>`;
+    html += renderShopContent(site, shopData, shop.orders);
+    return html;
+  }
+
+  // 여러 매장: 서브탭 표시
+  const currentShop = activeShopTab[tabKey] || shops[0].shopName;
+  // 현재 선택된 매장이 목록에 없으면 첫번째로 fallback
+  const selectedShop = shops.find(s => s.shopName === currentShop) || shops[0];
+
+  let html = '<div class="shop-tabs">';
+  shops.forEach(shop => {
+    const isActive = shop.shopName === selectedShop.shopName;
+    const orderCount = shop.orders.length;
+    html += `<button class="shop-tab ${isActive ? 'active' : ''}" data-shop="${escapeHtml(shop.shopName)}">${escapeHtml(shop.shopName)} (${orderCount})</button>`;
+  });
+  html += '</div>';
+
+  // 선택된 매장의 데이터 렌더
+  const shopData = { ...data, apiOrders: selectedShop.orders, orders: selectedShop.orders };
+  html += renderShopContent(site, shopData, selectedShop.orders);
+
+  return html;
+}
+
+// ── 매장 데이터 렌더 (요약 + 테이블) ──
+function renderShopContent(site, shopData, orders) {
+  if (!orders || orders.length === 0) {
+    return '<p style="color:#888;font-size:12px;padding:16px 0;text-align:center;">주문 데이터가 없습니다.</p>';
+  }
+
+  // 요약 카드
+  let totalAmount = 0;
+  let totalSettlement = 0;
+  orders.forEach(o => {
+    const amt = o.menuAmount || o.totalPayment || 0;
+    totalAmount += amt;
+    totalSettlement += (o.settlementAmount || 0);
+  });
+
+  let html = '<div class="shop-summary">';
+  html += `<div class="shop-summary-item"><div class="shop-summary-label">주문 건수</div><div class="shop-summary-value">${orders.length}건</div></div>`;
+  html += `<div class="shop-summary-item"><div class="shop-summary-label">총 매출</div><div class="shop-summary-value">${totalAmount.toLocaleString()}원</div></div>`;
+  if (totalSettlement > 0) {
+    html += `<div class="shop-summary-item"><div class="shop-summary-label">정산 예정</div><div class="shop-summary-value" style="color:#2563eb;">${totalSettlement.toLocaleString()}원</div></div>`;
+  }
+  html += '</div>';
+
+  // 테이블 렌더
+  html += renderData(shopData);
+  return html;
 }
 
 // ── 플랫폼별 데이터 정규화 (공통 표시 형식으로 변환) ──
@@ -558,6 +656,7 @@ document.getElementById('btnClear').addEventListener('click', async () => {
   await window.crawler.clearResults();
   allResults = {};
   activeTab = null;
+  activeShopTab = {};
   document.getElementById('result-area').style.display = 'none';
   document.getElementById('status').textContent = '초기화 완료';
   updateAllCards();

@@ -18,7 +18,7 @@ class DdangyoyoCrawler {
    * @param {string} [options.targetDate] - 크롤링 대상 날짜 (YYYY-MM-DD)
    * @param {string} [options.brandName] - 브랜드명
    * @param {object} [options.salesKeeper] - 매출지킴이 전송 설정
-   * @param {string} [options.mode] - 실행 모드 ('backfill': 90일 백필)
+   * @param {string} [options.mode] - 실행 모드 ('backfill': D-1 기준 2달 백필, API body 직접 수정 방식)
    */
   run(id, pw, options = {}) {
     return new Promise((resolve, reject) => {

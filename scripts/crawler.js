@@ -276,7 +276,7 @@ class Crawler {
 
     // 3) shopOwnerNumber 캡처
     const shopOwnerNumber = await view.webContents.executeJavaScript(`(function() {
-      const c = window._baeminCapturedResponses || [];
+      const c = window._baeminApiCaptures || [];
       for (const x of c) { const m = x.url.match(/shopOwnerNumber=(\\d+)/); if (m) return m[1]; }
       return null;
     })()`);
@@ -285,7 +285,7 @@ class Crawler {
 
     // 4) 첫 페이지 인터셉트 데이터 읽기
     const firstPage = await view.webContents.executeJavaScript(`(function() {
-      const c = window._baeminCapturedResponses || [];
+      const c = window._baeminApiCaptures || [];
       for (let i = c.length - 1; i >= 0; i--) {
         if (c[i].url.includes('/v4/orders') && !c[i].url.includes('commerce') && !c[i].url.includes('ad-')
             && c[i].url.includes('startDate=${targetDate}') && c[i].url.includes('endDate=${targetDate}')) {
@@ -305,7 +305,7 @@ class Crawler {
     while (allOrders.length < totalSize) {
       pg++;
       const prevCount = await view.webContents.executeJavaScript(`
-        window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
+        window._baeminApiCaptures.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
       `);
 
       const clicked = await view.webContents.executeJavaScript(`(function() {
@@ -326,11 +326,11 @@ class Crawler {
       for (let wait = 0; wait < 10; wait++) {
         await this.sleep(1000);
         const newCount = await view.webContents.executeJavaScript(`
-          window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
+          window._baeminApiCaptures.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
         `);
         if (newCount > prevCount) {
           newData = await view.webContents.executeJavaScript(`(function() {
-            const c = window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-'));
+            const c = window._baeminApiCaptures.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-'));
             return c[c.length - 1].data;
           })()`);
           break;
@@ -423,7 +423,7 @@ class Crawler {
 
     // 3) /proxy/orders/ 응답 캡처
     const ordersData = await view.webContents.executeJavaScript(`(function() {
-      const c = window._yogiyoCapturedResponses || [];
+      const c = window._ygCaptures || [];
       for (let i = c.length - 1; i >= 0; i--) {
         if (c[i].url.includes('/proxy/orders')) {
           const d = c[i].data;
@@ -459,7 +459,7 @@ class Crawler {
 
       for (const { orderNo, rowIdx } of orderRows) {
         try {
-          const beforeCount = (window._yogiyoCapturedResponses || []).length;
+          const beforeCount = (window._ygCaptures || []).length;
           const rows = document.querySelectorAll('table tbody tr');
           const row = rows[rowIdx] || Array.from(rows).find(r => r.innerText.includes(orderNo));
           if (!row) continue;
@@ -483,7 +483,7 @@ class Crawler {
           let detailData = null;
           for (let wait = 0; wait < 10; wait++) {
             await sleep(500);
-            const captured = window._yogiyoCapturedResponses || [];
+            const captured = window._ygCaptures || [];
             const detail = captured.slice(beforeCount).find(r =>
               r.url.includes('/proxy/order_detail/') || r.url.includes('/order_detail/') || r.url.includes('/order-detail/')
             );
@@ -790,138 +790,170 @@ class Crawler {
     }
   }
 
-  // ─── 배민 기간 범위 크롤링 (3개월 백필) ─────
+  // ─── 배민 기간 범위 크롤링 (2개월 백필, 매장별 순회 + API 구간 분할) ─────
+  // POC v2 기반: 홈 페이지 → shopOwnerNumber 캡처 → shops/search API → 매장별 월 구간 분할 XHR 수집
   async crawlBaeminRange(options = {}) {
     const view = this.view;
     this.onStatus({ site: 'baemin', page: 'orderHistory', status: 'crawling', mode: 'backfill' });
 
+    // ── 날짜 계산: D-1 기준 2달 전 ──
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const twoMonthsAgo = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1);
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const startDate = fmt(twoMonthsAgo);
+    const endDate = fmt(yesterday);
+
+    console.log(`[crawler] 배민 Range 크롤링 시작 (2개월: ${startDate} ~ ${endDate})`);
+
     // 1) 주문내역 페이지 이동 + 인터셉트 설치
-    console.log('[crawler] 배민 Range 크롤링 시작 (3개월)');
     const interceptScript = injector.getBaeminInterceptScript();
     view.webContents.once('dom-ready', () => {
       view.webContents.executeJavaScript(interceptScript).catch(() => {});
     });
     await this.navigateAndWait('https://self.baemin.com/orders/history');
     await this.sleep(3000);
-    // 재설치 (SPA 대비)
     await view.webContents.executeJavaScript(interceptScript).catch(() => {});
     await this.sleep(3000);
 
-    // 2) 3개월 기간 범위 필터 적용 → API 호출 트리거
-    console.log('[crawler] 배민 기간 범위 필터 적용 (3개월)');
-    try {
-      const filterResult = await view.webContents.executeJavaScript(
-        injector.getBaeminRangeFilterScript()
-      );
-      console.log('[crawler] 배민 기간 범위 필터 결과:', filterResult);
-      await this.sleep(3000);
-    } catch (err) {
-      console.error('[crawler] 배민 기간 범위 필터 실패:', err.message);
-    }
-
-    // 3) shopOwnerNumber 캡처
-    const shopOwnerNumber = await view.webContents.executeJavaScript(`(function() {
-      const c = window._baeminCapturedResponses || [];
-      for (const x of c) { const m = x.url.match(/shopOwnerNumber=(\\d+)/); if (m) return m[1]; }
+    // 2) shopOwnerNumber 캡처
+    let captureResult = await view.webContents.executeJavaScript(`(function() {
+      const c = window._baeminApiCaptures || [];
+      for (const x of c) {
+        const m = x.url.match(/shopOwnerNumber=(\\d+)/);
+        if (m) return { shopOwnerNumber: m[1], headers: x.headers || {}, url: x.url };
+      }
       return null;
     })()`);
-    if (!shopOwnerNumber) throw new Error('shopOwnerNumber 캡처 실패 (range)');
+
+    if (!captureResult) {
+      console.log('[crawler] 배민 shopOwnerNumber 미캡처 — 팝업 닫기 시도');
+      try {
+        await view.webContents.executeJavaScript(injector.getBaeminDismissPopupScript());
+      } catch {}
+      await this.sleep(3000);
+
+      captureResult = await view.webContents.executeJavaScript(`(function() {
+        const c = window._baeminApiCaptures || [];
+        for (const x of c) {
+          const m = x.url.match(/shopOwnerNumber=(\\d+)/);
+          if (m) return { shopOwnerNumber: m[1], headers: x.headers || {}, url: x.url };
+        }
+        return null;
+      })()`);
+    }
+
+    if (!captureResult) throw new Error('shopOwnerNumber 캡처 실패');
+    const shopOwnerNumber = captureResult.shopOwnerNumber;
     console.log(`[crawler] 배민 shopOwnerNumber: ${shopOwnerNumber}`);
 
-    // 4) 첫 페이지 인터셉트 데이터 읽기
-    const firstPage = await view.webContents.executeJavaScript(`(function() {
-      const c = window._baeminCapturedResponses || [];
-      for (let i = c.length - 1; i >= 0; i--) {
-        if (c[i].url.includes('/v4/orders') && !c[i].url.includes('commerce') && !c[i].url.includes('ad-')) {
-          return c[i].data;
+    // 3) 매장 목록 조회 (shops/search API via XHR)
+    console.log('[crawler] 배민 매장 목록 조회 (shops/search API)...');
+    const shopsApiUrl = `https://self-api.baemin.com/v4/store/shops/search?shopOwnerNo=${shopOwnerNumber}&lastOffsetId=&pageSize=50&desc=true`;
+    const shopsResult = await this._baeminFetchViaWebview(shopsApiUrl);
+
+    let shops = [];
+    if (!shopsResult?.error) {
+      const shopsData = shopsResult.data;
+      // 다양한 응답 구조 대응
+      if (Array.isArray(shopsData?.contents)) shops = shopsData.contents;
+      else if (Array.isArray(shopsData?.shops)) shops = shopsData.shops;
+      else if (Array.isArray(shopsData?.data)) shops = shopsData.data;
+      else if (Array.isArray(shopsData)) shops = shopsData;
+      else {
+        for (const key of Object.keys(shopsData || {})) {
+          if (Array.isArray(shopsData[key]) && shopsData[key].length > 0) {
+            shops = shopsData[key];
+            console.log(`[crawler] 배민 shops "${key}" 배열 사용 (${shops.length}개)`);
+            break;
+          }
         }
       }
-      return null;
-    })()`);
-    if (!firstPage) throw new Error('배민 Range 첫 페이지 API 응답 없음');
-
-    const allOrders = [...(firstPage.contents || [])];
-    const totalSize = firstPage.totalSize || 0;
-    console.log(`[crawler] 배민 Range 총 주문: ${totalSize}건 / 매출: ${(firstPage.totalPayAmount || 0).toLocaleString()}원`);
-
-    // 5) 추가 페이지 수집 — "다음" 버튼으로 UI 페이지네이션
-    let pg = 1;
-    while (allOrders.length < totalSize) {
-      pg++;
-      const prevCount = await view.webContents.executeJavaScript(`
-        window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
-      `);
-
-      const clicked = await view.webContents.executeJavaScript(`(function() {
-        const nextBtn = Array.from(document.querySelectorAll('button, a')).find(function(b) {
-          const label = (b.getAttribute('aria-label') || '');
-          const text = b.innerText.trim();
-          return label.includes('다음') || label.includes('next') ||
-                 text === '›' || text === '>' || text === '»' || text === '다음';
-        });
-        if (!nextBtn || nextBtn.disabled || nextBtn.getAttribute('aria-disabled') === 'true') return false;
-        nextBtn.click();
-        return true;
-      })()`);
-
-      if (!clicked) { console.log(`[crawler] 배민 Range page ${pg}: 마지막 페이지`); break; }
-
-      let newData = null;
-      for (let wait = 0; wait < 10; wait++) {
-        await this.sleep(1000);
-        const newCount = await view.webContents.executeJavaScript(`
-          window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-')).length
-        `);
-        if (newCount > prevCount) {
-          newData = await view.webContents.executeJavaScript(`(function() {
-            const c = window._baeminCapturedResponses.filter(x => x.url.includes('/v4/orders') && !x.url.includes('commerce') && !x.url.includes('ad-'));
-            return c[c.length - 1].data;
-          })()`);
-          break;
-        }
-      }
-
-      if (!newData) { console.log(`[crawler] 배민 Range page ${pg}: 응답 대기 타임아웃`); break; }
-      const contents = newData.contents || [];
-      console.log(`[crawler] 배민 Range [page ${pg}] ${contents.length}건`);
-      allOrders.push(...contents);
-      if (contents.length === 0) break;
     }
 
-    console.log(`[crawler] 배민 Range 전체 ${allOrders.length}건 수집 완료`);
+    if (shops.length === 0) {
+      // 캡처 데이터에서 추출 시도
+      console.log('[crawler] 배민 shops/search API 실패 → 캡처 데이터에서 추출 시도');
+      const capturedShops = await view.webContents.executeJavaScript(`(function() {
+        const c = window._baeminApiCaptures || [];
+        for (const x of c) { if (x.url.includes('shops/search')) return x.data; }
+        return null;
+      })()`);
+      if (capturedShops) {
+        if (Array.isArray(capturedShops.contents)) shops = capturedShops.contents;
+        else if (Array.isArray(capturedShops.shops)) shops = capturedShops.shops;
+        else if (Array.isArray(capturedShops.data)) shops = capturedShops.data;
+      }
+    }
 
-    // 6) API 데이터를 결과 형식으로 변환
+    // 매장 정규화
+    const normalizedShops = shops.map(s => {
+      const shopNumber = String(s.shopNumber || s.shopNo || s.id || s.number || '');
+      const shopName = s.shopName || s.name || s.title || '';
+      return { shopNumber, shopName };
+    }).filter(s => s.shopNumber);
+
+    console.log(`[crawler] 배민 총 ${normalizedShops.length}개 매장 발견`);
+    for (const s of normalizedShops) {
+      console.log(`[crawler]   - [${s.shopNumber}] ${s.shopName}`);
+    }
+    if (normalizedShops.length === 0) throw new Error('배민 매장 목록을 찾을 수 없습니다');
+
+    // 4) 매장별 순회 수집
+    const shopResults = [];
     const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount || 0;
-    const apiOrders = allOrders.map(item => {
-      const o = item.order || {};
-      const s = item.settle || {};
-      return {
-        orderId: o.orderNumber || '',
-        orderedAt: o.orderDateTime || '',
-        orderType: o.deliveryType === 'DELIVERY' ? 'delivery' : o.deliveryType === 'TAKEOUT' ? 'pickup' : (o.deliveryType || ''),
-        channel: o.deliveryType || '',
-        paymentMethod: o.payType || '',
-        menuSummary: o.itemsSummary || '',
-        menuAmount: o.payAmount || 0,
-        deliveryTip: o.deliveryTip || 0,
-        instantDiscount: o.totalInstantDiscountAmount || 0,
-        commissionFee: Math.abs(findCode(s.orderBrokerageItems, 'ADVERTISE_FEE')),
-        pgFee: Math.abs(findCode(s.etcItems, 'SERVICE_FEE')),
-        deliveryCost: Math.abs(s.deliveryItemAmount || 0),
-        vat: Math.abs(s.deductionAmountTotalVat || 0),
-        meetPayment: s.meetAmount || 0,
-        settlementAmount: s.depositDueAmount || 0,
-        settlementDate: s.depositDueDate || '',
-        platformDiscount: Math.abs(findCode(s.orderBrokerageItems, 'DISCOUNT_AMOUNT')),
-        rawData: item,
-      };
-    });
 
-    // 7) orderDateTime 기준 날짜별 그룹핑 → 날짜별 매출지킴이 전송
-    const grouped = this._groupOrdersByDate(apiOrders, (order) => {
-      // orderDateTime: "2026-03-14 18:30:00" or ISO format
+    for (let si = 0; si < normalizedShops.length; si++) {
+      const shop = normalizedShops[si];
+      console.log(`[crawler] 배민 매장 [${si + 1}/${normalizedShops.length}] ${shop.shopName} (${shop.shopNumber})`);
+      this.onStatus({ site: 'baemin', status: 'crawling', mode: 'backfill', shop: shop.shopName, shopIndex: si + 1, shopTotal: normalizedShops.length });
+
+      const allOrders = await this._baeminCollectOrdersForShop(shopOwnerNumber, shop.shopNumber, startDate, endDate);
+      console.log(`[crawler] 배민 매장 "${shop.shopName}" 수집 완료: ${allOrders.length}건`);
+
+      // 데이터 매핑
+      const apiOrders = allOrders.map(item => {
+        const o = item.order || {};
+        const s = item.settle || {};
+        return {
+          shopName: shop.shopName,
+          shopId: shop.shopNumber,
+          orderId: o.orderNumber || '',
+          orderedAt: o.orderDateTime || '',
+          orderType: o.deliveryType === 'DELIVERY' ? 'delivery' : o.deliveryType === 'TAKEOUT' ? 'pickup' : (o.deliveryType || ''),
+          channel: o.deliveryType || '',
+          paymentMethod: o.payType || '',
+          menuSummary: o.itemsSummary || '',
+          menuAmount: o.payAmount || 0,
+          deliveryTip: o.deliveryTip || 0,
+          instantDiscount: o.totalInstantDiscountAmount || 0,
+          commissionFee: Math.abs(findCode(s.orderBrokerageItems, 'ADVERTISE_FEE')),
+          pgFee: Math.abs(findCode(s.etcItems, 'SERVICE_FEE')),
+          deliveryCost: Math.abs(s.deliveryItemAmount || 0),
+          vat: Math.abs(s.deductionAmountTotalVat || 0),
+          meetPayment: s.meetAmount || 0,
+          settlementAmount: s.depositDueAmount || 0,
+          settlementDate: s.depositDueDate || '',
+          platformDiscount: Math.abs(findCode(s.orderBrokerageItems, 'DISCOUNT_AMOUNT')),
+        };
+      });
+
+      shopResults.push({ shopName: shop.shopName, shopId: shop.shopNumber, orders: apiOrders });
+
+      // 매장 전환 대기 (rate limit 방지)
+      if (si < normalizedShops.length - 1) {
+        console.log('[crawler] 배민 매장 전환 대기 10초...');
+        await this.sleep(10000);
+      }
+    }
+
+    // 5) 전체 결과 합산 + 날짜별 그룹핑 → 매출지킴이 전송
+    const allApiOrders = shopResults.flatMap(s => s.orders);
+    console.log(`[crawler] 배민 Range 전체 ${allApiOrders.length}건 수집 완료 (${normalizedShops.length}개 매장)`);
+
+    const grouped = this._groupOrdersByDate(allApiOrders, (order) => {
       const dt = order.orderedAt || '';
-      return dt.split(' ')[0].split('T')[0]; // YYYY-MM-DD
+      return dt.split(' ')[0].split('T')[0];
     });
 
     const dates = Object.keys(grouped).sort();
@@ -942,9 +974,9 @@ class Crawler {
       pageType: 'orderHistory',
       mode: 'backfill',
       extractedAt: new Date().toISOString(),
-      totalSize,
-      totalPayAmount: firstPage.totalPayAmount || 0,
-      apiOrders,
+      totalSize: allApiOrders.length,
+      apiOrders: allApiOrders,
+      shops: shopResults.map(s => ({ shopName: s.shopName, shopId: s.shopId, orderCount: s.orders.length })),
       dateGroups: Object.fromEntries(dates.map(d => [d, grouped[d].length])),
     };
 
@@ -953,19 +985,139 @@ class Crawler {
     this.onResult(result);
   }
 
-  // ─── 요기요 기간 범위 크롤링 (90일 백필) ─────
+  // ── 배민: 웹뷰 XHR로 API 호출 ──
+  _baeminFetchViaWebview(apiUrl) {
+    return this.view.webContents.executeJavaScript(`
+      (function() {
+        return new Promise(function(resolve) {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', ${JSON.stringify(apiUrl)}, true);
+          xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
+          xhr.setRequestHeader('service-channel', 'SELF_SERVICE_PC');
+          xhr.withCredentials = true;
+          xhr.onload = function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try { resolve({ success: true, data: JSON.parse(xhr.responseText) }); }
+              catch (e) { resolve({ error: 'JSON parse: ' + e.message }); }
+            } else {
+              resolve({ error: 'HTTP ' + xhr.status, body: xhr.responseText.substring(0, 300) });
+            }
+          };
+          xhr.onerror = function() { resolve({ error: 'XHR onerror' }); };
+          xhr.ontimeout = function() { resolve({ error: 'XHR timeout' }); };
+          xhr.timeout = 30000;
+          xhr.send();
+        });
+      })()
+    `);
+  }
+
+  // ── 배민: 월별 구간 분할 ──
+  _baeminSplitMonths(startDate, endDate) {
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const [sy, sm, sdd] = startDate.split('-').map(Number);
+    const [ey, em, edd] = endDate.split('-').map(Number);
+    const sd = new Date(sy, sm - 1, sdd);
+    const ed = new Date(ey, em - 1, edd);
+    const months = [];
+    let cursor = new Date(sd);
+    while (cursor <= ed) {
+      const monthStart = fmt(cursor);
+      const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+      const monthEndStr = monthEnd > ed ? endDate : fmt(monthEnd);
+      if (monthStart <= monthEndStr) {
+        months.push({ start: monthStart, end: monthEndStr });
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return months;
+  }
+
+  // ── 배민: 매장 1개에 대한 주문 수집 (월별 구간 분할 + offset 페이지네이션) ──
+  async _baeminCollectOrdersForShop(shopOwnerNumber, shopNumber, startDate, endDate) {
+    const months = this._baeminSplitMonths(startDate, endDate);
+    console.log(`[crawler] 배민 ${months.length}개 월별 구간으로 분할 조회`);
+
+    const LIMIT = 10;
+    const allOrders = [];
+
+    for (let mi = 0; mi < months.length; mi++) {
+      const month = months[mi];
+      console.log(`[crawler] 배민 [${mi + 1}/${months.length}] ${month.start} ~ ${month.end} 조회`);
+      let offset = 0;
+      let totalSize = null;
+      let pageNum = 0;
+
+      while (true) {
+        pageNum++;
+        const apiUrl = `https://self-api.baemin.com/v4/orders?offset=${offset}&limit=${LIMIT}&startDate=${month.start}&endDate=${month.end}&shopOwnerNumber=${shopOwnerNumber}&shopNumbers=${shopNumber}&orderStatus=CLOSED`;
+
+        let result;
+        let retries = 0;
+        const MAX_RETRIES = 5;
+
+        while (retries <= MAX_RETRIES) {
+          result = await this._baeminFetchViaWebview(apiUrl);
+          if (result?.error && result.error.includes('429')) {
+            retries++;
+            const waitSec = 10 + (10 * retries);
+            console.log(`[crawler] 배민 429 Rate Limit → ${waitSec}초 대기 후 재시도 (${retries}/${MAX_RETRIES})`);
+            await this.sleep(waitSec * 1000);
+            continue;
+          }
+          break;
+        }
+
+        if (result?.error) {
+          console.log(`[crawler] 배민 API 에러: ${result.error}`);
+          break;
+        }
+
+        const data = result.data;
+        if (totalSize === null) {
+          totalSize = data.totalSize || 0;
+          console.log(`[crawler] 배민 총 주문: ${totalSize}건 / 총 매출: ${(data.totalPayAmount || 0).toLocaleString()}원`);
+        }
+
+        const contents = data.contents || [];
+        console.log(`[crawler] 배민 [page ${pageNum}] ${contents.length}건 (누적: ${allOrders.length + contents.length})`);
+        allOrders.push(...contents);
+
+        offset += LIMIT;
+        if (offset >= totalSize || contents.length === 0) break;
+
+        // 크롤링 방지: 3초 대기
+        await this.sleep(3000);
+      }
+
+      // 월 구간 사이 5초 대기
+      if (mi < months.length - 1) {
+        console.log('[crawler] 배민 구간 전환 대기 5초...');
+        await this.sleep(5000);
+      }
+    }
+
+    return allOrders;
+  }
+
+  // ─── 요기요 기간 범위 크롤링 (2개월 백필, 매장별 순회 + XHR 페이지네이션 + 배치 정산) ─────
+  // POC v2 기반: 사이드바 매장 리스트 → 매장별 순회 → 직접설정 날짜 필터 → POST body page 페이지네이션 → 배치 정산
   async crawlYogiyoRange(options = {}) {
     const view = this.view;
     this.onStatus({ site: 'yogiyo', page: 'orderHistory', status: 'crawling', mode: 'backfill' });
 
-    // startDate = 90일 전 (KST)
-    const now = new Date();
-    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-    kst.setDate(kst.getDate() - 90);
-    const startDate = kst.toISOString().slice(0, 10);
+    // ── 날짜 계산: D-1 기준 전전달 1일부터 ──
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const twoMonthsAgo = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1);
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const startDate = fmt(twoMonthsAgo);
+    const endDate = fmt(yesterday);
+
+    console.log(`[crawler] 요기요 Range 크롤링 시작 (전전달 1일: ${startDate} ~ ${endDate})`);
 
     // 1) 주문내역 페이지 이동 + 인터셉트 설치
-    console.log(`[crawler] 요기요 Range 크롤링 시작 (startDate: ${startDate})`);
     const interceptScript = injector.getYogiyoInterceptScript();
     view.webContents.once('dom-ready', () => {
       view.webContents.executeJavaScript(interceptScript).catch(() => {});
@@ -975,167 +1127,308 @@ class Crawler {
     await view.webContents.executeJavaScript(interceptScript).catch(() => {});
     await this.sleep(3000);
 
-    // 2) 기간 범위 필터 적용 (직접설정 → startDate)
-    console.log(`[crawler] 요기요 기간 범위 필터 적용: ${startDate}`);
-    try {
-      const filterResult = await view.webContents.executeJavaScript(
-        injector.getYogiyoRangeFilterScript(startDate)
-      );
-      console.log('[crawler] 요기요 기간 범위 필터 결과:', filterResult);
-      await this.sleep(5000);
-    } catch (err) {
-      console.error('[crawler] 요기요 기간 범위 필터 실패:', err.message);
-    }
+    // 2) 매장 리스트 추출
+    console.log('[crawler] 요기요 매장 리스트 추출...');
+    const storeListResult = await view.webContents.executeJavaScript(injector.getYogiyoStoreListScript());
+    let stores = storeListResult?.stores || [];
+    console.log(`[crawler] 요기요 매장 ${stores.length}개 발견`);
 
-    // 3) /proxy/orders/ 응답 캡처
-    const ordersData = await view.webContents.executeJavaScript(`(function() {
-      const c = window._yogiyoCapturedResponses || [];
-      for (let i = c.length - 1; i >= 0; i--) {
-        if (c[i].url.includes('/proxy/orders')) {
-          const d = c[i].data;
-          if (d.orders || d.results) return d;
-        }
-      }
-      return null;
-    })()`);
-    if (!ordersData) throw new Error('요기요 Range 주문 API 캡처 실패');
-
-    const allOrders = ordersData.orders || ordersData.results || [];
-    console.log(`[crawler] 요기요 Range 총 주문: ${ordersData.count || allOrders.length}건 / 매출: ${(ordersData.orders_price || 0).toLocaleString()}원`);
-
-    // 4) 정산 수집 — 각 주문 행 클릭 → order_detail API 캡처
-    console.log(`[crawler] 요기요 Range 정산 수집 (${allOrders.length}건)...`);
-    this.onStatus({ site: 'yogiyo', page: 'settlement', status: 'crawling', mode: 'backfill' });
-
-    const settlementScript = `(async function() {
-      const sleep = ms => new Promise(r => setTimeout(r, ms));
-      const results = [];
-      const orderRows = [];
-      document.querySelectorAll('table tbody tr').forEach((row, idx) => {
-        const text = row.innerText || '';
-        const m = text.match(/([A-Z]\\d{10,}[A-Z0-9]*|F\\d+[A-Z0-9]+)/);
-        if (m) orderRows.push({ orderNo: m[1], rowIdx: idx });
-      });
-
-      for (const { orderNo, rowIdx } of orderRows) {
-        try {
-          const beforeCount = (window._yogiyoCapturedResponses || []).length;
-          const rows = document.querySelectorAll('table tbody tr');
-          const row = rows[rowIdx] || Array.from(rows).find(r => r.innerText.includes(orderNo));
-          if (!row) continue;
-
-          const cells = row.querySelectorAll('td');
-          let clicked = false;
-          for (let c = cells.length - 1; c >= 0 && !clicked; c--) {
-            const el = cells[c].querySelector('button, a, [role="button"], [class*="arrow"], [class*="chevron"]');
-            if (el && typeof el.click === 'function') { el.click(); clicked = true; break; }
-            const svg = cells[c].querySelector('svg');
-            if (svg) {
-              const parent = svg.closest('button, a, div, span, td');
-              if (parent && typeof parent.click === 'function') { parent.click(); clicked = true; break; }
-              svg.dispatchEvent(new MouseEvent('click', { bubbles: true })); clicked = true; break;
+    if (stores.length === 0) {
+      // 매장이 1개뿐인 경우 — 사이드바에 드롭다운이 없을 수 있음
+      console.log('[crawler] 요기요 매장 리스트 없음 → 현재 매장 정보 추출 시도');
+      const currentStore = await view.webContents.executeJavaScript(`(function() {
+        const allEls = document.querySelectorAll('div, span, p, h1, h2, h3, h4');
+        for (const el of allEls) {
+          const text = (el.innerText || '').trim();
+          if (text.includes('ID.') && text.match(/ID\\.\\s*\\d+/) && el.offsetParent !== null && text.length < 200) {
+            const m = text.match(/ID\\.\\s*(\\d+)/);
+            if (m) {
+              const storeName = text.split('ID.')[0].trim().replace(/[·\\-]\\s*$/, '').trim();
+              return { storeId: m[1], storeName: storeName || 'Unknown' };
             }
           }
-          if (!clicked) row.click();
-
-          let detailData = null;
-          for (let wait = 0; wait < 10; wait++) {
-            await sleep(500);
-            const captured = window._yogiyoCapturedResponses || [];
-            const detail = captured.slice(beforeCount).find(r =>
-              r.url.includes('/proxy/order_detail/') || r.url.includes('/order_detail/') || r.url.includes('/order-detail/')
-            );
-            if (detail?.data) { detailData = detail.data; break; }
-          }
-
-          if (detailData) results.push({ orderNumber: orderNo, data: detailData });
-
-          const closeBtn = document.querySelector('[aria-label*="닫기"], [aria-label*="close" i]')
-            || Array.from(document.querySelectorAll('button, span, div')).find(b =>
-              ['×', 'X', '✕', '닫기'].includes(b.innerText.trim())
-            );
-          if (closeBtn) closeBtn.click();
-          else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-          await sleep(1000);
-        } catch (e) {
-          try {
-            const x = Array.from(document.querySelectorAll('button, span')).find(b => ['×', 'X', '✕'].includes(b.innerText.trim()));
-            if (x) x.click();
-          } catch {}
-          await sleep(500);
         }
+        return null;
+      })()`);
+      if (currentStore) {
+        stores = [{ storeId: currentStore.storeId, storeName: currentStore.storeName, isSelected: true }];
+        console.log(`[crawler] 요기요 현재 매장: ${currentStore.storeName} (ID: ${currentStore.storeId})`);
+      } else {
+        stores = [{ storeId: 'unknown', storeName: 'Unknown', isSelected: true }];
+        console.log('[crawler] 요기요 매장 정보 미발견 → 단일 매장으로 진행');
       }
-      return results;
-    })()`;
-
-    let settlementResults = [];
-    try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('yogiyo range settlement timeout')), 300000)
-      );
-      settlementResults = await Promise.race([
-        view.webContents.executeJavaScript(settlementScript),
-        timeoutPromise,
-      ]);
-    } catch (err) {
-      console.error('[crawler] 요기요 Range 정산 수집 실패:', err.message);
     }
 
-    // 정산 맵
-    const settlementMap = {};
-    for (const r of (settlementResults || [])) {
-      settlementMap[r.orderNumber] = r.data;
-    }
-    const validCount = Object.values(settlementMap).filter(d => d.settlement_info?.settlement_amount).length;
-    console.log(`[crawler] 요기요 Range 정산 ${(settlementResults || []).length}건 캡처 (유효 ${validCount}건)`);
+    stores.forEach((s, i) => console.log(`[crawler] 요기요 [${i + 1}] ${s.storeName} (ID: ${s.storeId})`));
 
-    // 5) DB SalesOrder 매핑
+    // 3) 매장별 수집
+    const allStoreResults = [];
     const payMap = { ONLINE: '온라인결제', OFFLINE_CARD: '만나서카드', OFFLINE_CASH: '만나서현금' };
     const channelMap = { VD: '배달', OD: '자체배달', TAKEOUT: '포장' };
 
-    const apiOrders = allOrders.map(order => {
-      const s = settlementMap[order.order_number] || {};
-      const si = s.settlement_info || {};
-      const items = si.settlement_items || [];
-      const findItem = (keyword) => {
-        const item = items.find(i => (i.item_title || '').includes(keyword));
-        return Math.abs(item?.item_amount ?? item?.item_price ?? 0);
-      };
-      const menuItems = order.items || [];
-      const firstItemName = menuItems[0]?.name || '';
-      const menuSummary = menuItems.length > 1
-        ? `${firstItemName} 외 ${menuItems.length - 1}건`
-        : firstItemName;
+    for (let si = 0; si < stores.length; si++) {
+      const store = stores[si];
+      console.log(`[crawler] 요기요 매장 [${si + 1}/${stores.length}] ${store.storeName} (ID: ${store.storeId})`);
+      this.onStatus({ site: 'yogiyo', status: 'crawling', mode: 'backfill', shop: store.storeName, shopIndex: si + 1, shopTotal: stores.length });
 
-      return {
-        orderId: order.order_number || '',
-        orderedAt: order.submitted_at || '',
-        orderType: order.purchase_serving_type || '',
-        channel: channelMap[order.delivery_method_code] || order.delivery_method_code || '',
-        paymentMethod: payMap[order.central_payment_type] || order.central_payment_type || '',
-        menuSummary,
-        menuAmount: order.items_price || 0,
-        deliveryIncome: order.delivery_fee || 0,
-        commissionFee: findItem('중개') || findItem('이용료'),
-        pgFee: findItem('외부결제') || findItem('결제'),
-        deliveryCost: s.delivery_fee || findItem('배달'),
-        storeDiscount: findItem('할인보전') || findItem('요기요') || Math.abs(si.yogiyo_discount_amount || 0),
-        vat: findItem('부가세'),
-        adFee: findItem('광고'),
-        settlementAmount: si.settlement_amount || 0,
-        settlementDate: si.payment_date || '',
-        items: menuItems.map(item => ({
-          menuName: item.name || '',
-          quantity: item.quantity || 1,
-        })),
-      };
-    });
+      // 3a. 매장 선택
+      if (si > 0 || !store.isSelected) {
+        console.log('[crawler] 요기요 매장 전환 중...');
+        const selectResult = await view.webContents.executeJavaScript(injector.getYogiyoSelectStoreScript(store.storeId));
+        console.log(`[crawler] 요기요 매장 전환: ${JSON.stringify(selectResult)}`);
+        if (!selectResult?.success) {
+          console.log(`[crawler] 요기요 매장 전환 실패 → 스킵`);
+          allStoreResults.push({ storeName: store.storeName, storeId: store.storeId, error: selectResult?.error, orders: [] });
+          continue;
+        }
+        await this.sleep(3000);
+        // 매장 전환 후 주문내역 페이지 재이동
+        const currentUrl = view.webContents.getURL();
+        if (!currentUrl.includes('/order-history')) {
+          console.log('[crawler] 요기요 주문내역 페이지 재이동...');
+          view.webContents.once('dom-ready', () => {
+            view.webContents.executeJavaScript(interceptScript).catch(() => {});
+          });
+          await this.navigateAndWait('https://ceo.yogiyo.co.kr/order-history/list');
+          await this.sleep(5000);
+        }
+        await view.webContents.executeJavaScript(interceptScript).catch(() => {});
+        await this.sleep(2000);
+      }
 
-    // 6) submitted_at 기준 날짜별 그룹핑 → 날짜별 매출지킴이 전송
-    const grouped = this._groupOrdersByDate(apiOrders, (order) => {
-      // submitted_at: "2026-03-14 18:30:00" or similar
+      // 3b. 캡처 초기화 + 날짜 필터 + 주문 수집
+      await view.webContents.executeJavaScript(injector.getYogiyoResetCapturesScript()).catch(() => {});
+      await this.sleep(1000);
+
+      console.log(`[crawler] 요기요 날짜 필터: ${startDate} ~ ${endDate}`);
+      const filterResult = await view.webContents.executeJavaScript(
+        injector.getYogiyoBackfillDateFilterScript(startDate, endDate)
+      );
+      console.log(`[crawler] 요기요 필터 결과: ${JSON.stringify(filterResult)}`);
+      if (!filterResult?.success) {
+        console.log(`[crawler] 요기요 날짜 필터 실패: ${filterResult?.error || 'unknown'}`);
+        allStoreResults.push({ storeName: store.storeName, storeId: store.storeId, error: filterResult?.error, orders: [] });
+        continue;
+      }
+      await this.sleep(5000);
+
+      // 주문 목록 추출
+      let firstPageData = await view.webContents.executeJavaScript(`(function() {
+        const c = window._ygCaptures || [];
+        for (let i = c.length - 1; i >= 0; i--) {
+          if (c[i].url.includes('/proxy/orders')) {
+            const d = c[i].data;
+            if (d.orders || d.results) return { data: d, url: c[i].url };
+          }
+        }
+        return null;
+      })()`);
+
+      if (!firstPageData) {
+        console.log('[crawler] 요기요 주문 API 캡처 실패');
+        allStoreResults.push({ storeName: store.storeName, storeId: store.storeId, orders: [] });
+        continue;
+      }
+
+      const ordersData = firstPageData.data;
+      const firstPageUrl = firstPageData.url;
+      let allOrders = ordersData.orders || ordersData.results || [];
+      const totalCount = ordersData.count || allOrders.length;
+      console.log(`[crawler] 요기요 1페이지: ${allOrders.length}건 / 전체: ${totalCount}건`);
+
+      // 페이지네이션 (POST body page 파라미터)
+      if (totalCount > allOrders.length) {
+        console.log(`[crawler] 요기요 페이지네이션: ${totalCount}건 중 ${allOrders.length}건 수신`);
+        const remainingOrders = await view.webContents.executeJavaScript(`(async function() {
+          const totalCount = ${totalCount};
+          const pageSize = ${allOrders.length};
+          const allExtra = [];
+          const sleep = ms => new Promise(r => setTimeout(r, ms));
+          const reqInfo = window._ygOrdersRequest;
+          const xhrHeaders = reqInfo?.headers || {};
+          const allHeaders = {...(window._ygAuthHeaders || {}), ...xhrHeaders};
+          const origUrl = reqInfo?.url || ${JSON.stringify(firstPageUrl)};
+          const origMethod = reqInfo?.method || 'GET';
+          const origBody = reqInfo?.body || null;
+
+          let bodyObj = null;
+          try { bodyObj = origBody ? JSON.parse(origBody) : null; } catch {}
+
+          if (bodyObj && typeof bodyObj.page !== 'undefined') {
+            const totalPages = Math.ceil(totalCount / pageSize);
+            console.log('[intercept] POST body page 페이지네이션: ' + totalPages + '페이지');
+            for (let page = 2; page <= totalPages; page++) {
+              try {
+                bodyObj.page = page;
+                const bodyStr = JSON.stringify(bodyObj);
+                const xhr = new XMLHttpRequest();
+                xhr.open(origMethod, origUrl, false);
+                Object.entries(allHeaders).forEach(([k, v]) => {
+                  try { xhr.setRequestHeader(k, v); } catch {}
+                });
+                xhr.send(bodyStr);
+                if (xhr.status === 200) {
+                  const data = JSON.parse(xhr.responseText);
+                  const orders = data.orders || data.results || [];
+                  console.log('[intercept] page ' + page + ': ' + orders.length + '건');
+                  if (orders.length === 0) break;
+                  allExtra.push(...orders);
+                  if (allExtra.length + pageSize >= totalCount) break;
+                  if (page % 3 === 0) await sleep(300);
+                } else {
+                  console.log('[intercept] page ' + page + ' 실패: HTTP ' + xhr.status);
+                  if (xhr.status === 401 || xhr.status === 403) break;
+                }
+              } catch (e) {
+                console.log('[intercept] page ' + page + ' 에러: ' + e.message);
+                break;
+              }
+            }
+          } else {
+            console.log('[intercept] offset 방식 시도');
+            for (let offset = pageSize; offset < totalCount; offset += pageSize) {
+              try {
+                let paginatedUrl = origUrl + (origUrl.includes('?') ? '&' : '?') + 'offset=' + offset;
+                const xhr = new XMLHttpRequest();
+                xhr.open(origMethod, paginatedUrl, false);
+                Object.entries(allHeaders).forEach(([k, v]) => {
+                  try { xhr.setRequestHeader(k, v); } catch {}
+                });
+                xhr.send(origBody);
+                if (xhr.status === 200) {
+                  const data = JSON.parse(xhr.responseText);
+                  const orders = data.orders || data.results || [];
+                  if (orders.length === 0) break;
+                  allExtra.push(...orders);
+                  if (allExtra.length + pageSize >= totalCount) break;
+                  await sleep(300);
+                } else break;
+              } catch (e) { break; }
+            }
+          }
+
+          console.log('[intercept] 페이지네이션 완료: 추가 ' + allExtra.length + '건');
+          return allExtra;
+        })()`);
+        allOrders = allOrders.concat(remainingOrders);
+        console.log(`[crawler] 요기요 전체 주문 수집 완료: ${allOrders.length}건`);
+      }
+
+      if (allOrders.length === 0) {
+        console.log('[crawler] 요기요 해당 기간 주문 없음');
+        allStoreResults.push({ storeName: store.storeName, storeId: store.storeId, totalOrders: 0, orders: [] });
+        continue;
+      }
+
+      // 3c. 배치 정산 수집 (XHR 직접 호출, 3건씩 동시)
+      const orderNumbers = allOrders.map(o => o.order_number).filter(Boolean);
+      console.log(`[crawler] 요기요 정산 수집: ${orderNumbers.length}건...`);
+      this.onStatus({ site: 'yogiyo', page: 'settlement', status: 'crawling', mode: 'backfill', shop: store.storeName });
+
+      const settlementResults = await view.webContents.executeJavaScript(`(async function() {
+        const orderNumbers = ${JSON.stringify(orderNumbers)};
+        const results = [];
+        const reqInfo = window._ygOrdersRequest;
+        const xhrHeaders = reqInfo?.headers || {};
+        const allHeaders = {...(window._ygAuthHeaders || {}), ...xhrHeaders};
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        console.log('[intercept] API 정산 수집 시작: ' + orderNumbers.length + '건');
+
+        function fetchDetail(orderNo, headers) {
+          return new Promise((resolve) => {
+            const url = 'https://ceo-api.yogiyo.co.kr/proxy/order_detail/' + orderNo + '/';
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.timeout = 8000;
+            Object.entries(headers).forEach(([k, v]) => {
+              try { xhr.setRequestHeader(k, v); } catch {}
+            });
+            xhr.onload = function() {
+              if (xhr.status === 200) {
+                try {
+                  const data = JSON.parse(xhr.responseText);
+                  resolve({ orderNumber: orderNo, data: data.data || data });
+                } catch (e) { resolve({ orderNumber: orderNo, data: null }); }
+              } else { resolve({ orderNumber: orderNo, data: null }); }
+            };
+            xhr.onerror = function() { resolve({ orderNumber: orderNo, data: null }); };
+            xhr.ontimeout = function() { resolve({ orderNumber: orderNo, data: null }); };
+            xhr.send();
+          });
+        }
+
+        const BATCH_SIZE = 3;
+        for (let i = 0; i < orderNumbers.length; i += BATCH_SIZE) {
+          const batch = orderNumbers.slice(i, i + BATCH_SIZE);
+          const batchResults = await Promise.all(batch.map(no => fetchDetail(no, allHeaders)));
+          results.push(...batchResults);
+          const done = Math.min(i + BATCH_SIZE, orderNumbers.length);
+          if (done % 30 === 0) console.log('[intercept] 정산 진행: ' + done + '/' + orderNumbers.length + '건');
+          if (i + BATCH_SIZE < orderNumbers.length) await sleep(300);
+        }
+
+        console.log('[intercept] API 정산 수집 완료: ' + results.filter(r => r.data).length + '/' + orderNumbers.length + '건');
+        return results;
+      })()`);
+
+      const settlementMap = {};
+      for (const r of (settlementResults || [])) {
+        if (r.data) settlementMap[r.orderNumber] = r.data;
+      }
+      console.log(`[crawler] 요기요 정산 캡처 성공: ${Object.keys(settlementMap).length}/${orderNumbers.length}건`);
+
+      // 3d. 매핑
+      const apiOrders = allOrders.map(order => {
+        const s = settlementMap[order.order_number] || {};
+        const si = s.settlement_info || {};
+        const items = si.settlement_items || [];
+        const findItem = (keyword) => {
+          const item = items.find(i => (i.item_title || '').includes(keyword));
+          return Math.abs(item?.item_amount ?? item?.item_price ?? 0);
+        };
+        const menuItems = order.items || [];
+        const firstItemName = menuItems[0]?.name || '';
+        const menuSummary = menuItems.length > 1
+          ? `${firstItemName} 외 ${menuItems.length - 1}건`
+          : firstItemName;
+
+        return {
+          storeName: store.storeName,
+          storeId: store.storeId,
+          orderId: order.order_number || '',
+          orderedAt: order.submitted_at || '',
+          orderType: order.service_type || '',
+          channel: channelMap[order.delivery_method_code] || order.delivery_method_code || '',
+          paymentMethod: payMap[order.central_payment_type] || order.central_payment_type || '',
+          menuSummary,
+          menuAmount: order.items_price || 0,
+          deliveryIncome: order.delivery_fee || 0,
+          commissionFee: findItem('중개') || findItem('이용료'),
+          pgFee: findItem('외부결제') || findItem('결제'),
+          deliveryCost: s.delivery_fee || findItem('배달'),
+          storeDiscount: findItem('할인보전') || findItem('요기요') || Math.abs(si.yogiyo_discount_amount || 0),
+          vat: findItem('부가세'),
+          adFee: findItem('광고'),
+          settlementAmount: si.settlement_amount || 0,
+          settlementDate: si.payment_date || '',
+          items: menuItems.map(item => ({
+            menuName: item.name || '',
+            quantity: item.quantity || 1,
+          })),
+        };
+      });
+
+      console.log(`[crawler] 요기요 매장 "${store.storeName}" 수집 완료: ${apiOrders.length}건`);
+      allStoreResults.push({ storeName: store.storeName, storeId: store.storeId, totalOrders: apiOrders.length, orders: apiOrders });
+    }
+
+    // 4) 전체 결과 합산 + 날짜별 그룹핑 → 매출지킴이 전송
+    const allApiOrders = allStoreResults.flatMap(s => s.orders);
+    console.log(`[crawler] 요기요 Range 전체 ${allApiOrders.length}건 수집 완료 (${stores.length}개 매장)`);
+
+    const grouped = this._groupOrdersByDate(allApiOrders, (order) => {
       const dt = order.orderedAt || '';
-      return dt.split(' ')[0].split('T')[0]; // YYYY-MM-DD
+      return dt.split(' ')[0].split('T')[0];
     });
 
     const dates = Object.keys(grouped).sort();
@@ -1156,9 +1449,9 @@ class Crawler {
       pageType: 'orderHistory',
       mode: 'backfill',
       extractedAt: new Date().toISOString(),
-      totalCount: ordersData.count || allOrders.length,
-      ordersPrice: ordersData.orders_price || 0,
-      apiOrders,
+      totalCount: allApiOrders.length,
+      apiOrders: allApiOrders,
+      shops: allStoreResults.map(s => ({ storeName: s.storeName, storeId: s.storeId, orderCount: s.totalOrders || 0 })),
       dateGroups: Object.fromEntries(dates.map(d => [d, grouped[d].length])),
     };
 
@@ -1372,6 +1665,7 @@ class Crawler {
       const { results, errors } = await ce.run(creds.id, creds.pw, {
         targetDate: options.targetDate,
         brandName: options.brandName,
+        mode: options.mode,
         salesKeeper: options.salesKeeper,
       });
 

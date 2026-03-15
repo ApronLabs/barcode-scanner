@@ -72,10 +72,20 @@
     .guide { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px; font-size: 12px; color: #92400e; margin-bottom: 16px; }
 
     #result-area { display: none; }
-    .result-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .result-tabs { display: flex; gap: 4px; margin-bottom: 0; }
     .result-tab { padding: 6px 14px; border: 1px solid #e5e7eb; border-radius: 6px 6px 0 0; background: #f9fafb; font-size: 12px; cursor: pointer; border-bottom: none; }
     .result-tab.active { background: white; font-weight: 700; color: #2563eb; }
     .result-content { background: white; border: 1px solid #e5e7eb; border-radius: 0 8px 8px 8px; padding: 14px; }
+
+    /* 매장별 서브탭 */
+    .shop-tabs { display: flex; gap: 2px; margin-bottom: 12px; padding: 4px; background: #f3f4f6; border-radius: 6px; }
+    .shop-tab { padding: 5px 12px; border: none; border-radius: 4px; background: transparent; font-size: 11px; cursor: pointer; color: #6b7280; font-weight: 500; transition: all 0.15s; white-space: nowrap; }
+    .shop-tab:hover { background: #e5e7eb; color: #374151; }
+    .shop-tab.active { background: white; color: #2563eb; font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+    .shop-summary { display: flex; gap: 12px; margin-bottom: 12px; }
+    .shop-summary-item { flex: 1; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; text-align: center; }
+    .shop-summary-label { font-size: 11px; color: #6b7280; margin-bottom: 2px; }
+    .shop-summary-value { font-size: 16px; font-weight: 700; color: #059669; }
 
     .order-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .order-table th { background: #f9fafb; padding: 8px 10px; text-align: left; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb; }

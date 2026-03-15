@@ -1,7 +1,7 @@
 // 자동 크롤링 스케줄러
 // - 매일 KST 11시에 어제 날짜 데이터 자동 수집
 // - DB에 이미 수집된 데이터는 스킵
-// - 첫 사용 시 3개월 백필
+// - 첫 사용 시 2개월 백필
 'use strict';
 
 const { Crawler } = require('./crawler');
@@ -113,16 +113,23 @@ class AutoCrawlScheduler {
     }
 
     const yesterday = this._getKstYesterday();
-    const startDate90 = this._addDays(yesterday, -89);
+    // 전전달 1일 계산 (예: 3/14 → 1/1)
+    const yParts = yesterday.split('-').map(Number);
+    const startDateObj = new Date(yParts[0], yParts[1] - 1 - 2, 1); // 전전달 1일
+    const startDate60 = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-01`;
 
-    // 4. sync-status 확인 (90일 전 ~ 어제)
-    let syncedDates = {};
+    // 4. sync-status 확인 (전전달 1일 ~ 어제)
+    let syncedDates = null;
     let syncStatusFailed = false;
     try {
-      syncedDates = await this._checkSyncStatus(storeId, startDate90, yesterday);
-      if (Object.keys(syncedDates).length === 0) {
+      syncedDates = await this._checkSyncStatus(storeId, startDate60, yesterday);
+      // syncedDates가 null이면 API 자체 실패 (401, 네트워크 에러 등)
+      if (syncedDates === null) {
         syncStatusFailed = true;
-        console.log('[scheduler] sync-status 비어 있음 — fallback (어제만 크롤링)');
+        console.log('[scheduler] sync-status API 실패 — fallback (어제만 크롤링)');
+      } else {
+        // 빈 객체 {}는 "데이터 없음"이지 실패가 아님 → 백필 필요
+        console.log('[scheduler] sync-status 결과:', JSON.stringify(Object.keys(syncedDates).reduce((a, k) => { a[k] = (syncedDates[k] || []).length + '건'; return a; }, {})));
       }
     } catch (err) {
       syncStatusFailed = true;
@@ -188,7 +195,7 @@ class AutoCrawlScheduler {
     // 6. 미수집 날짜/플랫폼 확인
     const needBackfillSites = availableSources.filter(src => {
       const synced = syncedDates[src] || [];
-      const dateRange = this._getDateRange(startDate90, yesterday);
+      const dateRange = this._getDateRange(startDate60, yesterday);
       return dateRange.some(d => !synced.includes(d));
     });
 
@@ -215,7 +222,7 @@ class AutoCrawlScheduler {
         this._backfilling = false;
       }
     } else {
-      console.log('[scheduler] 백필 불필요 — 모든 플랫폼 90일 데이터 수집 완료');
+      console.log('[scheduler] 백필 불필요 — 모든 플랫폼 60일 데이터 수집 완료');
     }
 
     // 8. 어제 데이터 daily 크롤링
@@ -347,17 +354,17 @@ class AutoCrawlScheduler {
       const { unauthorized, response } = await this.authenticatedFetch(url);
       if (unauthorized) {
         console.warn('[scheduler] sync-status 401 — 세션 만료');
-        return {};
+        return null; // API 실패
       }
       if (!response.ok) {
         console.warn('[scheduler] sync-status 응답 오류:', response.status);
-        return {};
+        return null; // API 실패
       }
       const data = await response.json();
-      return data.syncedDates || {};
+      return data.syncedDates || {}; // 빈 객체 = 데이터 없음 (정상)
     } catch (err) {
       console.error('[scheduler] sync-status 요청 실패:', err.message);
-      return {};
+      return null; // API 실패
     }
   }
 

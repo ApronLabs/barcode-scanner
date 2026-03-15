@@ -4,6 +4,9 @@
 // v2: 정산 데이터 수집 + 매출지킴이 전송
 //     주문내역 + 정산상세(requestQryCalculateDetail) API 인터셉트
 // v3: backfill 모드 — 시작일 캘린더 조작 + 날짜별 그룹핑 전송
+// v4: backfill 모드 — POC 검증 완료된 API body 직접 수정 방식
+//     WebSquare DOM 조작 대신 캡처된 API body의 dma_para를 수정하여 직접 fetch
+//     매장별 수집: gen_patstoSelector에서 매장 목록 추출 → patsto_no로 매장 구분
 'use strict';
 
 const path = require('path');
@@ -80,7 +83,138 @@ function getDaysAgoIso(daysAgo) {
   return d.toISOString().slice(0, 10);
 }
 
-// 주문내역 추출
+// D-1 기준 전전달 1일부터 날짜 범위 계산
+function getBackfillDateRange() {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const end = new Date(yesterday);
+  const start = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1); // 전전달 1일
+  const fmt = (d) => d.toISOString().split('T')[0]; // YYYY-MM-DD
+  const fmtCompact = (d) => fmt(d).replace(/-/g, ''); // YYYYMMDD
+  return {
+    startDate: fmt(start),
+    endDate: fmt(end),
+    startDateCompact: fmtCompact(start),
+    endDateCompact: fmtCompact(end),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// API 인터셉트 스크립트 (fetch + XHR 모두 캡처)
+// POC에서 검증 완료 — WebSquare의 XHR 기반 API 호출 캡처
+// ═══════════════════════════════════════════════════════════
+
+const INTERCEPT_SCRIPT = `(function() {
+  if (window._ddIntercepted) return;
+  window._ddIntercepted = true;
+  window._ddCaptures = [];
+
+  const origFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+    const opts = args[1] || {};
+    const response = await origFetch.apply(this, args);
+    if (url.includes('boss.ddangyo.com') || url.includes('/o2o/')) {
+      try {
+        const clone = response.clone();
+        const text = await clone.text();
+        try {
+          const json = JSON.parse(text);
+          window._ddCaptures.push({
+            url, data: json, ts: Date.now(),
+            method: opts.method || 'GET',
+            body: opts.body || null,
+            contentType: opts.headers?.['Content-Type'] || null,
+          });
+        } catch {}
+      } catch {}
+    }
+    return response;
+  };
+
+  const origXHROpen = XMLHttpRequest.prototype.open;
+  const origXHRSend = XMLHttpRequest.prototype.send;
+  const origXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this._ddUrl = url;
+    this._ddMethod = method;
+    this._ddHeaders = {};
+    return origXHROpen.call(this, method, url, ...rest);
+  };
+  XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+    if (this._ddHeaders) this._ddHeaders[name] = value;
+    return origXHRSetHeader.call(this, name, value);
+  };
+  XMLHttpRequest.prototype.send = function(...args) {
+    this._ddBody = args[0] || null;
+    this.addEventListener('load', function() {
+      const url = this._ddUrl || '';
+      if (url.includes('boss.ddangyo.com') || url.includes('/o2o/')) {
+        try {
+          const json = JSON.parse(this.responseText);
+          window._ddCaptures.push({
+            url, data: json, ts: Date.now(),
+            method: this._ddMethod || 'GET',
+            body: this._ddBody,
+            headers: this._ddHeaders || {},
+            contentType: (this._ddHeaders || {})['Content-Type'] || null,
+          });
+        } catch {}
+      }
+    });
+    return origXHRSend.apply(this, args);
+  };
+
+  console.log('[intercept] API intercept installed');
+  true;
+})();`;
+
+// ═══════════════════════════════════════════════════════════
+// API 응답 기반 SalesOrder 매핑 (POC 검증 완료)
+// ═══════════════════════════════════════════════════════════
+
+function parseAmount(str) {
+  if (typeof str === 'number') return str;
+  if (!str) return 0;
+  return parseInt(String(str).replace(/[^0-9\-]/g, ''), 10) || 0;
+}
+
+function parseDateTime(setlDt, setlTm) {
+  if (!setlDt) return '';
+  const y = setlDt.substring(0, 4);
+  const m = setlDt.substring(4, 6);
+  const d = setlDt.substring(6, 8);
+  if (!setlTm) return `${y}-${m}-${d}`;
+  const hh = setlTm.substring(0, 2);
+  const mm = setlTm.substring(2, 4);
+  const ss = setlTm.substring(4, 6);
+  return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
+
+function mapToSalesOrder(order, storeName) {
+  const menuNm = (order.menu_nm || '').trim();
+  const saleAmt = parseAmount(order.sale_amt);
+  const settlAmt = parseAmount(order.tot_setl_amt);
+  const orderedAt = parseDateTime(order.setl_dt, order.setl_tm);
+
+  return {
+    orderId: order.ord_id || '',
+    orderIdInternal: order.ord_no || '',
+    orderedAt,
+    orderType: order.ord_tp_nm || '',
+    menuSummary: menuNm,
+    menuAmount: saleAmt,
+    settlementAmount: settlAmt,
+    totalFee: saleAmt - settlAmt,
+    channel: order.ord_tp_nm || 'DELIVERY',
+    orderStatus: order.ord_prog_stat_cd === '40' ? 'COMPLETED' : order.ord_prog_stat_cd || '',
+    isRegularCustomer: order.regl_cust_yn === 'Y',
+    storeName: storeName,
+    items: [],
+  };
+}
+
+// 주문내역 추출 (DOM 스크래핑 — 일반 모드용)
 // @param {boolean} skipNavigation - true이면 메뉴 클릭 생략 (backfill 등 이미 이동한 경우)
 async function extractOrders(page, { skipNavigation = false } = {}) {
   if (!skipNavigation) {
@@ -570,15 +704,15 @@ async function sendToSalesKeeper(config, targetDate, platformStoreId, brandName,
 
     // 주문 데이터 변환
     const apiOrders = (orders || []).map(o => ({
-      orderId: o.orderNo,
-      orderedAt: o.date ? new Date(o.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString() : new Date().toISOString(),
-      orderType: o.method || '',
-      menuSummary: o.orderSummary || '',
-      menuAmount: parseInt((o.amount || '0').replace(/,/g, ''), 10),
+      orderId: o.orderId || o.orderNo,
+      orderedAt: o.orderedAt || (o.date ? new Date(o.date.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString() : new Date().toISOString()),
+      orderType: o.orderType || o.method || '',
+      menuSummary: o.menuSummary || o.orderSummary || '',
+      menuAmount: o.menuAmount || parseInt((o.amount || '0').replace(/,/g, ''), 10),
       paymentMethod: o.method || '',
-      storeDiscount: parseInt((o.discount || '0').replace(/,/g, ''), 10),
-      deliveryCost: parseInt((o.deliveryFee || '0').replace(/,/g, ''), 10),
-      settlementAmount: parseInt((o.totalPayment || '0').replace(/,/g, ''), 10),
+      storeDiscount: o.discount != null ? parseInt(String(o.discount).replace(/,/g, ''), 10) : 0,
+      deliveryCost: o.deliveryFee != null ? parseInt(String(o.deliveryFee).replace(/,/g, ''), 10) : 0,
+      settlementAmount: o.settlementAmount || parseInt((o.totalPayment || '0').replace(/,/g, ''), 10),
     }));
 
     const body = JSON.stringify({
@@ -626,166 +760,547 @@ async function sendToSalesKeeper(config, targetDate, platformStoreId, brandName,
 }
 
 // ═══════════════════════════════════════════════════════════
-// backfill: 주문내역 날짜 범위 설정 (시작일 캘린더 조작)
+// v4 backfill: API body 직접 수정 방식 (POC 검증 완료)
+//
+// 1. 로그인 후 주문내역 페이지 이동
+// 2. API 인터셉트로 requestQryOrderList body 캡처
+// 3. 매장 드롭다운(gen_patstoSelector)에서 매장 목록 추출
+// 4. 매장별로:
+//    a. API body의 patsto_no 설정
+//    b. setl_dt_st=2달전, setl_dt_ed=어제, page_row_cnt=500
+//    c. 수정된 body로 직접 fetch
+//    d. 날짜별 그룹핑 → 매출지킴이 전송
 // ═══════════════════════════════════════════════════════════
 
-async function setBackfillDateRange(page) {
-  const startDateCompact = getDaysAgoCompact(90); // 90일 전
-  const endDateCompact = getDaysAgoCompact(1);    // 어제
-  const startDateIso = getDaysAgoIso(90);
-  const endDateIso = getDaysAgoIso(1);
-  console.log(`[ddangyoyo-worker] backfill 날짜 범위: ${startDateIso} ~ ${endDateIso}`);
+async function runBackfill(page, config) {
+  const { brandName, salesKeeper } = config;
+  const dates = getBackfillDateRange();
+  console.log(`[worker-backfill] 기간: ${dates.startDate} ~ ${dates.endDate} (D-1 기준 2달)`);
 
-  // 방법 1: Input 직접 값 설정 (기존 코드 패턴 활용)
-  const inputSet = await page.evaluate((startDt, endDt) => {
-    const inputs = document.querySelectorAll('input[type="text"]');
-    let startFound = false;
-    let endFound = false;
-    for (const inp of inputs) {
-      const id = inp.id || '';
-      if (id.includes('strt_dt') || id.includes('start_dt') || id.includes('fr_dt')) {
-        inp.value = startDt;
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        startFound = true;
-      }
-      if (id.includes('end_dt') || id.includes('to_dt')) {
-        inp.value = endDt;
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        endFound = true;
-      }
-    }
-    return { startFound, endFound };
-  }, startDateCompact, endDateCompact);
+  send('status', { status: 'crawling', page: 'orders', mode: 'backfill' });
 
-  console.log(`[ddangyoyo-worker] Input 직접 설정: start=${inputSet.startFound}, end=${inputSet.endFound}`);
+  // ── Step 1: 주문내역 페이지 이동 + API 인터셉트 설치 ──
+  console.log('[worker-backfill] Step 1: 주문내역 페이지 이동');
 
-  // 방법 2: Input 설정이 안 되면 캘린더 UI 조작
-  if (!inputSet.startFound) {
-    console.log('[ddangyoyo-worker] Input 못 찾음 — 캘린더 UI 조작 시도');
+  // 인터셉트 스크립트 설치
+  await page.evaluate(INTERCEPT_SCRIPT);
+  await sleep(1000);
 
-    // 시작일 캘린더 아이콘 클릭
-    const calOpened = await page.evaluate(() => {
-      // 캘린더 아이콘/버튼 찾기 (시작일 쪽)
-      const calBtns = document.querySelectorAll(
-        '[id*="strt_dt"] ~ [class*="calendar"], ' +
-        '[id*="strt_dt"] ~ button, ' +
-        '[id*="strt_dt"] ~ img, ' +
-        '[class*="calendar"][class*="start"], ' +
-        'img[src*="calendar"], ' +
-        'button[class*="cal"]'
-      );
-      if (calBtns.length > 0) {
-        calBtns[0].click();
-        return true;
-      }
-      // WebSquare 캘린더 아이콘 패턴
-      const wsCalBtns = document.querySelectorAll('[id*="btn_cal"], [id*="calendar"], [class*="w2calendar"]');
-      if (wsCalBtns.length > 0) {
-        wsCalBtns[0].click();
-        return true;
-      }
-      return false;
-    });
-
-    if (calOpened) {
-      await sleep(1000);
-
-      // 3개월 전으로 이동 (< 이전달 버튼 3번 클릭)
-      for (let i = 0; i < 3; i++) {
-        await page.evaluate(() => {
-          const prevBtns = document.querySelectorAll(
-            '[class*="prev"], [class*="Prev"], ' +
-            'button[title*="이전"], a[title*="이전"]'
-          );
-          for (const btn of prevBtns) {
-            if (btn.offsetHeight > 0) { btn.click(); return; }
-          }
-          // < 텍스트 패턴
-          const allBtns = document.querySelectorAll('button, a, span');
-          for (const btn of allBtns) {
-            if (btn.innerText?.trim() === '<' || btn.innerText?.trim() === '◀') {
-              btn.click();
-              return;
-            }
-          }
-        });
-        await sleep(500);
-      }
-
-      // 해당 월의 목표 날짜 클릭
-      const targetDay = parseInt(startDateCompact.slice(6, 8), 10);
-      await page.evaluate((day) => {
-        // 캘린더에서 날짜 셀 클릭
-        const cells = document.querySelectorAll(
-          'td[class*="day"], td[class*="date"], ' +
-          '[class*="calendar"] td, [class*="Calendar"] td'
-        );
-        for (const cell of cells) {
-          const text = cell.innerText?.trim();
-          if (text === String(day) && !cell.classList.contains('disabled') && !cell.classList.contains('other')) {
-            cell.click();
-            return true;
-          }
-        }
-        return false;
-      }, targetDay);
-      await sleep(500);
-    }
-  }
-
-  // 조회 버튼 클릭
+  // 주문내역 메뉴 클릭
   await page.evaluate(() => {
-    const btns = document.querySelectorAll('button, a');
-    for (const btn of btns) {
-      const text = btn.innerText?.trim();
-      if (text === '조회' || text === '검색') {
-        btn.click();
-        return true;
+    const links = Array.from(document.querySelectorAll('a'));
+    links.find(a => a.innerText.trim() === '주문내역')?.click();
+  });
+  await sleep(8000);
+
+  // SPA 네비게이션 후 인터셉트 재설치
+  await page.evaluate(INTERCEPT_SCRIPT);
+  await sleep(3000);
+
+  // ── Step 2: API 패턴 캡처 (requestQryOrderList) ──
+  console.log('[worker-backfill] Step 2: API 패턴 캡처');
+
+  let apiInfo = await page.evaluate(() => {
+    const c = window._ddCaptures || [];
+    for (let i = c.length - 1; i >= 0; i--) {
+      if (c[i].url.includes('requestQryOrderList') || (c[i].data && c[i].data.dlt_result)) {
+        return {
+          url: c[i].url,
+          method: c[i].method || 'GET',
+          body: c[i].body || null,
+          headers: c[i].headers || {},
+          contentType: c[i].contentType || null,
+          resultCount: (c[i].data?.dlt_result || []).length,
+        };
       }
     }
-    return false;
+    return null;
   });
 
-  console.log('[ddangyoyo-worker] backfill 조회 요청 완료 — 데이터 로딩 대기');
-  await sleep(5000);
+  // 캡처 안 됐으면 조회 버튼 클릭 시도
+  if (!apiInfo) {
+    console.log('[worker-backfill] 초기 캡처 없음 -> 조회 버튼 클릭');
+    await page.evaluate(() => {
+      window._ddIntercepted = false;
+      window._ddCaptures = [];
+    });
+    await page.evaluate(INTERCEPT_SCRIPT);
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a, input[type="button"]'));
+      const searchBtn = btns.find(b => (b.innerText || b.value || '').trim() === '조회');
+      if (searchBtn) searchBtn.click();
+    });
+    await sleep(5000);
 
-  return { startDate: startDateIso, endDate: endDateIso };
-}
+    apiInfo = await page.evaluate(() => {
+      const c = window._ddCaptures || [];
+      for (let i = c.length - 1; i >= 0; i--) {
+        if (c[i].url.includes('requestQryOrderList') || (c[i].data && c[i].data.dlt_result)) {
+          return {
+            url: c[i].url,
+            method: c[i].method || 'GET',
+            body: c[i].body || null,
+            headers: c[i].headers || {},
+            contentType: c[i].contentType || null,
+            resultCount: (c[i].data?.dlt_result || []).length,
+          };
+        }
+      }
+      return null;
+    });
+  }
 
-// ═══════════════════════════════════════════════════════════
-// backfill: 날짜별 그룹핑 후 각 날짜별 매출지킴이 전송
-// ═══════════════════════════════════════════════════════════
+  if (!apiInfo) {
+    const allUrls = await page.evaluate(() => {
+      return (window._ddCaptures || []).map(c => ({ url: (c.url || '').substring(0, 200), method: c.method }));
+    });
+    console.error('[worker-backfill] API 캡처 실패. 캡처된 URL:', JSON.stringify(allUrls));
+    send('error', { error: '땡겨요 API 패턴 캡처 실패 (requestQryOrderList)' });
+    return null;
+  }
 
-async function sendBackfillToSalesKeeper(config, platformStoreId, brandName, allOrders) {
-  const dateGroups = groupOrdersByDate(allOrders);
-  const dates = Object.keys(dateGroups).sort();
+  console.log(`[worker-backfill] API URL: ${apiInfo.url}`);
+  console.log(`[worker-backfill] Body preview: ${(apiInfo.body || '').substring(0, 300)}`);
 
-  console.log(`[ddangyoyo-worker] backfill 전송: ${dates.length}개 날짜, 총 ${allOrders.length}건`);
+  // API body 파싱
+  let baseBody;
+  try { baseBody = JSON.parse(apiInfo.body); } catch { baseBody = null; }
 
-  const results = [];
-  for (const date of dates) {
-    const dayOrders = dateGroups[date];
-    console.log(`[ddangyoyo-worker] ${date}: ${dayOrders.length}건 전송`);
-    try {
-      const result = await sendToSalesKeeper(
-        config,
-        date,
-        platformStoreId,
-        brandName,
-        dayOrders.length,
-        null, // settlement — backfill에서는 주문별로 분리 불가, null 전송
-        dayOrders,
-      );
-      results.push({ date, orderCount: dayOrders.length, result });
-    } catch (err) {
-      console.error(`[ddangyoyo-worker] ${date} 전송 실패:`, err.message);
-      results.push({ date, orderCount: dayOrders.length, error: err.message });
+  if (!baseBody || !baseBody.dma_para) {
+    console.error('[worker-backfill] dma_para 구조 파싱 실패');
+    send('error', { error: '땡겨요 API body 구조 파싱 실패 (dma_para 없음)' });
+    return null;
+  }
+
+  const apiHeaders = Object.keys(apiInfo.headers).length > 0
+    ? apiInfo.headers
+    : { 'Content-Type': 'application/json; charset=UTF-8' };
+
+  // ── Step 3: 매장 목록 추출 (gen_patstoSelector) ──
+  console.log('[worker-backfill] Step 3: 매장 목록 추출');
+
+  // 드롭다운 클릭하여 매장 목록 열기
+  await page.evaluate(() => {
+    const allEls = Array.from(document.querySelectorAll('*'));
+    for (const el of allEls) {
+      const directText = Array.from(el.childNodes)
+        .filter(n => n.nodeType === 3)
+        .map(n => n.textContent.trim())
+        .join('');
+      if (directText.includes('가게전체') || directText.includes('가게 전체')) {
+        const clickTarget = el.closest('button, a, [role="combobox"], [role="listbox"], select, .selectbox') || el;
+        clickTarget.click();
+        return;
+      }
+    }
+    // input[value*="가게전체"] 근처의 selectbox 클릭
+    const inputs = Array.from(document.querySelectorAll('input'));
+    for (const inp of inputs) {
+      if ((inp.value || '').includes('가게전체') || (inp.value || '').includes('가게 전체')) {
+        const parent = inp.closest('[class*="select"], [class*="combo"]') || inp.parentElement;
+        if (parent) parent.click();
+        return;
+      }
+    }
+  });
+  await sleep(2000);
+
+  // gen_patstoSelector 패턴으로 매장 추출
+  let storeList = await page.evaluate(() => {
+    const stores = [];
+
+    // 1) gen_patstoSelector 패턴 (WebSquare)
+    let idx = 0;
+    while (true) {
+      const el = document.getElementById('mf_wfm_contents_gen_patstoSelector_' + idx + '_tbx_patstoItem');
+      if (!el) break;
+      const name = el.textContent.trim();
+      if (name && !name.includes('가게전체') && !name.includes('가게 전체')) {
+        stores.push({ name, selectorIndex: idx });
+      }
+      idx++;
+    }
+    if (stores.length > 0) return { source: 'ws-patstoSelector', stores };
+
+    // 2) select 요소에서 옵션 추출
+    const selects = Array.from(document.querySelectorAll('select'));
+    for (const sel of selects) {
+      const opts = Array.from(sel.options);
+      const hasAll = opts.some(o => o.textContent.trim().includes('가게전체'));
+      if (hasAll) {
+        for (const o of opts) {
+          const name = o.textContent.trim();
+          if (!name.includes('가게전체') && !name.includes('가게 전체') && name) {
+            stores.push({ name, value: o.value });
+          }
+        }
+        return { source: 'select', selectId: sel.id, stores };
+      }
+    }
+
+    // 3) WebSquare selectbox 리스트
+    const wsLists = Array.from(document.querySelectorAll('[class*="w2selectbox"] li, [class*="selectbox_list"] li, [id*="patsto"] li'));
+    for (const li of wsLists) {
+      const text = li.textContent.trim();
+      if (text && !text.includes('가게전체') && !text.includes('가게 전체') && text.length < 50 && text.length > 1) {
+        if (!stores.some(s => s.name === text)) {
+          stores.push({ name: text, element: li.tagName + '#' + li.id });
+        }
+      }
+    }
+    if (stores.length > 0) return { source: 'ws-list', stores };
+
+    return { source: 'not-found', stores: [] };
+  });
+
+  console.log(`[worker-backfill] 매장 목록 추출: ${storeList.source}, ${storeList.stores.length}개`);
+
+  // 팝업 닫기
+  await page.evaluate(() => {
+    const closeBtn = Array.from(document.querySelectorAll('button, a, span')).find(el => {
+      const t = el.textContent.trim();
+      return t === 'X' || t === '닫기' || el.className?.includes('close');
+    });
+    if (closeBtn) closeBtn.click();
+    document.body.click();
+  });
+  await sleep(1000);
+
+  // 매장 목록이 비어있으면 API로 가게전체 조회 후 주문 데이터에서 매장 추출
+  if (storeList.stores.length === 0) {
+    console.log('[worker-backfill] UI에서 매장 목록 추출 실패, API 기반 매장 탐색...');
+
+    const testBody = JSON.parse(JSON.stringify(baseBody));
+    testBody.dma_para.setl_dt_st = dates.startDateCompact;
+    testBody.dma_para.setl_dt_ed = dates.endDateCompact;
+    testBody.dma_para.page_row_cnt = 500;
+    testBody.dma_para.page_num = 1;
+    testBody.dma_para.patsto_no = '0000000';
+    testBody.dma_para.patsto_nm = '가게전체';
+
+    const testBodyStr = JSON.stringify(testBody);
+    const testResult = await page.evaluate(async (apiUrl, headers, bodyStr) => {
+      try {
+        const resp = await fetch(apiUrl, {
+          method: 'POST',
+          headers: headers,
+          credentials: 'include',
+          body: bodyStr,
+        });
+        const data = await resp.json();
+        const orders = data.dlt_result || [];
+        const storeMap = {};
+        for (const o of orders) {
+          const no = o.patsto_no || '';
+          const nm = o.patsto_nm || o.store_nm || '';
+          if (no && no !== '0000000') {
+            storeMap[no] = nm || no;
+          }
+        }
+        return { success: true, totalOrders: orders.length, storeMap };
+      } catch (e) {
+        return { success: false, error: e.message };
+      }
+    }, apiInfo.url, apiHeaders, testBodyStr);
+
+    console.log(`[worker-backfill] 가게전체 조회: ${testResult.success ? testResult.totalOrders + '건' : testResult.error}`);
+
+    if (testResult.success && Object.keys(testResult.storeMap).length > 0) {
+      storeList = {
+        source: 'api-orders',
+        stores: Object.entries(testResult.storeMap).map(([no, nm]) => ({ name: nm, value: no })),
+      };
+    } else {
+      // 마지막 수단: rpsnt_patsto_no를 개별 매장으로 사용
+      const rpsntNo = baseBody.dma_para.rpsnt_patsto_no;
+      console.log(`[worker-backfill] 대표 매장 번호로 fallback: ${rpsntNo}`);
+      storeList = {
+        source: 'fallback-rpsnt',
+        stores: [{ name: brandName || 'unknown', value: rpsntNo }],
+      };
     }
   }
 
-  return results;
+  console.log(`[worker-backfill] 총 ${storeList.stores.length}개 매장:`);
+  for (const s of storeList.stores) {
+    console.log(`[worker-backfill]   - ${s.name} (${s.value || 'no-id'})`);
+  }
+
+  // ── Step 4: 매장별 주문 수집 (API body 직접 수정) ──
+  console.log('[worker-backfill] Step 4: 매장별 주문 수집');
+
+  const allStoreResults = {};
+
+  for (let si = 0; si < storeList.stores.length; si++) {
+    const store = storeList.stores[si];
+    console.log(`[worker-backfill] [${si + 1}/${storeList.stores.length}] ${store.name}`);
+
+    let storePatNo = store.value || null;
+
+    // selectorIndex가 있으면 UI 클릭으로 매장 선택 → API 캡처하여 patsto_no 확인
+    if (store.selectorIndex !== undefined && !storePatNo) {
+      console.log(`[worker-backfill] 매장 선택 UI 클릭 (selectorIndex: ${store.selectorIndex})...`);
+
+      // 캡처 초기화
+      await page.evaluate(() => {
+        window._ddIntercepted = false;
+        window._ddCaptures = [];
+      });
+      await page.evaluate(INTERCEPT_SCRIPT);
+
+      // 드롭다운 열기
+      await page.evaluate(() => {
+        const trigger = document.getElementById('mf_wfm_contents_tbx_selectedPatstoItem')
+          || document.getElementById('mf_wfm_contents_wq_uuid_499');
+        if (trigger) {
+          const parent = trigger.closest('a, button, div[class*="pop_call"]') || trigger;
+          parent.click();
+        }
+      });
+      await sleep(1000);
+
+      // 매장 항목 클릭
+      const sIdx = store.selectorIndex;
+      await page.evaluate((idx) => {
+        const clickLine = document.getElementById('mf_wfm_contents_gen_patstoSelector_' + idx + '_grp_clickLine');
+        if (clickLine) { clickLine.click(); return; }
+        const tbx = document.getElementById('mf_wfm_contents_gen_patstoSelector_' + idx + '_tbx_patstoItem');
+        if (tbx) {
+          const parent = tbx.closest('a, li, div') || tbx;
+          parent.click();
+        }
+      }, sIdx);
+      await sleep(3000);
+
+      // 매장 선택 후 API 캡처에서 patsto_no 추출
+      const capturedStoreApi = await page.evaluate(() => {
+        const c = window._ddCaptures || [];
+        for (let i = c.length - 1; i >= 0; i--) {
+          if (c[i].url.includes('requestQryOrderList') && c[i].body) {
+            try {
+              const b = JSON.parse(c[i].body);
+              if (b.dma_para && b.dma_para.patsto_no !== '0000000') {
+                return { patsto_no: b.dma_para.patsto_no, patsto_nm: b.dma_para.patsto_nm };
+              }
+            } catch {}
+          }
+        }
+        return null;
+      });
+
+      if (capturedStoreApi) {
+        storePatNo = capturedStoreApi.patsto_no;
+        console.log(`[worker-backfill] patsto_no 캡처: ${storePatNo} (${capturedStoreApi.patsto_nm})`);
+      } else {
+        storePatNo = baseBody.dma_para.rpsnt_patsto_no;
+        console.log(`[worker-backfill] 자동 캡처 없음, rpsnt_patsto_no 사용: ${storePatNo}`);
+      }
+    }
+
+    // API body 수정: 매장 + 2달 날짜 + 500건
+    const reqBody = JSON.parse(JSON.stringify(baseBody));
+    reqBody.dma_para.setl_dt_st = dates.startDateCompact;
+    reqBody.dma_para.setl_dt_ed = dates.endDateCompact;
+    reqBody.dma_para.page_row_cnt = 500;
+    reqBody.dma_para.page_num = 1;
+    if (storePatNo) {
+      reqBody.dma_para.patsto_no = storePatNo;
+    }
+    reqBody.dma_para.patsto_nm = store.name;
+    store.value = storePatNo || store.value || '';
+
+    console.log(`[worker-backfill] 요청: patsto_no=${reqBody.dma_para.patsto_no}, ${dates.startDateCompact}~${dates.endDateCompact}`);
+
+    const reqBodyStr = JSON.stringify(reqBody);
+    const result = await page.evaluate(async (apiUrl, headers, bodyStr) => {
+      try {
+        const resp = await fetch(apiUrl, {
+          method: 'POST',
+          headers: headers,
+          credentials: 'include',
+          body: bodyStr,
+        });
+        const data = await resp.json();
+        return {
+          success: true,
+          orders: data.dlt_result || [],
+          summary: data.dlt_result_single || {},
+        };
+      } catch (e) {
+        return { success: false, error: e.message };
+      }
+    }, apiInfo.url, apiHeaders, reqBodyStr);
+
+    if (!result.success) {
+      console.error(`[worker-backfill] API 호출 실패: ${result.error}`);
+      continue;
+    }
+
+    let allOrders = result.orders;
+    const totalExpected = result.summary.tot_cnt || allOrders.length;
+    console.log(`[worker-backfill] 응답: ${allOrders.length}건 / 총 ${totalExpected}건`);
+
+    // 페이지네이션
+    let pageNum = 2;
+    while (allOrders.length < totalExpected && pageNum <= 20) {
+      console.log(`[worker-backfill] 페이지 ${pageNum} 추가 조회... (${allOrders.length}/${totalExpected})`);
+      reqBody.dma_para.page_num = pageNum;
+      const pageBodyStr = JSON.stringify(reqBody);
+
+      const pageResult = await page.evaluate(async (apiUrl, headers, bodyStr) => {
+        try {
+          const resp = await fetch(apiUrl, {
+            method: 'POST',
+            headers: headers,
+            credentials: 'include',
+            body: bodyStr,
+          });
+          const data = await resp.json();
+          return { success: true, orders: data.dlt_result || [] };
+        } catch (e) {
+          return { success: false, error: e.message };
+        }
+      }, apiInfo.url, apiHeaders, pageBodyStr);
+
+      if (!pageResult.success || pageResult.orders.length === 0) break;
+
+      const existingIds = new Set(allOrders.map(o => o.ord_id || o.ord_no));
+      const uniqueNew = pageResult.orders.filter(o => !existingIds.has(o.ord_id || o.ord_no));
+      if (uniqueNew.length === 0) break;
+
+      allOrders = allOrders.concat(uniqueNew);
+      console.log(`[worker-backfill]   +${uniqueNew.length}건 (누적 ${allOrders.length}건)`);
+      pageNum++;
+      await sleep(1000);
+    }
+
+    // 날짜별 그룹핑 (setl_dt 기준)
+    const byDate = {};
+    for (const order of allOrders) {
+      const dt = order.setl_dt || 'unknown';
+      if (!byDate[dt]) byDate[dt] = [];
+      byDate[dt].push(order);
+    }
+
+    const dailySummaries = {};
+    const sortedDates = Object.keys(byDate).sort();
+
+    for (const dt of sortedDates) {
+      const dayOrders = byDate[dt];
+      const mapped = dayOrders.map(o => mapToSalesOrder(o, store.name));
+      let daySale = 0, daySettl = 0;
+      for (const o of mapped) {
+        daySale += o.menuAmount;
+        daySettl += o.settlementAmount;
+      }
+      const dateFormatted = dt.length === 8
+        ? `${dt.substring(0, 4)}-${dt.substring(4, 6)}-${dt.substring(6, 8)}`
+        : dt;
+      dailySummaries[dateFormatted] = {
+        date: dateFormatted,
+        dateCompact: dt,
+        orderCount: dayOrders.length,
+        totalSaleAmount: daySale,
+        totalSettlementAmount: daySettl,
+        totalFee: daySale - daySettl,
+        orders: mapped,
+      };
+      console.log(`[worker-backfill]   ${dateFormatted}: ${dayOrders.length}건 | 매출:${daySale.toLocaleString()} | 정산:${daySettl.toLocaleString()}`);
+    }
+
+    // 매장 합계
+    let storeSale = 0, storeSettl = 0;
+    for (const ds of Object.values(dailySummaries)) {
+      storeSale += ds.totalSaleAmount;
+      storeSettl += ds.totalSettlementAmount;
+    }
+
+    allStoreResults[store.name] = {
+      storeName: store.name,
+      storeId: store.value || '',
+      dateRange: { start: dates.startDate, end: dates.endDate },
+      totalDays: sortedDates.length,
+      totalOrders: allOrders.length,
+      totalSaleAmount: storeSale,
+      totalSettlementAmount: storeSettl,
+      totalFee: storeSale - storeSettl,
+      dailySummaries,
+    };
+
+    console.log(`[worker-backfill] 매장 합계: ${sortedDates.length}일 / ${allOrders.length}건 / 매출:${storeSale.toLocaleString()} / 정산:${storeSettl.toLocaleString()}`);
+
+    // 매장 간 대기
+    if (si < storeList.stores.length - 1) await sleep(2000);
+  }
+
+  // ── Step 5: 매출지킴이 전송 (날짜별) ──
+  if (salesKeeper) {
+    console.log('[worker-backfill] Step 5: 매출지킴이 전송');
+
+    for (const [storeName, storeResult] of Object.entries(allStoreResults)) {
+      console.log(`[worker-backfill] ${storeName} 전송 시작 (${Object.keys(storeResult.dailySummaries).length}일)`);
+
+      for (const [date, daySummary] of Object.entries(storeResult.dailySummaries)) {
+        // settlement 추정 생성 (orders의 sale_amt/tot_setl_amt 합산)
+        const settlement = {
+          ordAmt: daySummary.totalSaleAmount,
+          paynAmt: daySummary.totalSettlementAmount,
+          delvfeeAmt: 0,
+          ordMediAmt: 0,
+          setlAjstAmt: 0,
+          ownerCoupAmt: 0,
+          patstosCoupAmt: 0,
+          plfmCoupAmt: 0,
+          delvAgntAmt: 0,
+        };
+
+        try {
+          await sendToSalesKeeper(
+            salesKeeper,
+            date,
+            storeResult.storeId,
+            storeName,
+            daySummary.orderCount,
+            settlement,
+            daySummary.orders,
+          );
+          console.log(`[worker-backfill]   ${date}: ${daySummary.orderCount}건 전송 완료`);
+        } catch (err) {
+          console.error(`[worker-backfill]   ${date} 전송 실패:`, err.message);
+        }
+      }
+    }
+  }
+
+  // 결과 IPC 전송
+  let grandSale = 0, grandSettl = 0, grandOrders = 0;
+  for (const sr of Object.values(allStoreResults)) {
+    grandSale += sr.totalSaleAmount;
+    grandSettl += sr.totalSettlementAmount;
+    grandOrders += sr.totalOrders;
+  }
+
+  const backfillResult = {
+    success: true,
+    site: 'ddangyoyo',
+    mode: 'backfill',
+    dateRange: { start: dates.startDate, end: dates.endDate },
+    storeCount: Object.keys(allStoreResults).length,
+    totalOrders: grandOrders,
+    totalSaleAmount: grandSale,
+    totalSettlementAmount: grandSettl,
+    totalFee: grandSale - grandSettl,
+    stores: allStoreResults,
+  };
+
+  console.log(`[worker-backfill] 완료: ${Object.keys(allStoreResults).length}매장 / ${grandOrders}건 / 매출:${grandSale.toLocaleString()} / 정산:${grandSettl.toLocaleString()}`);
+
+  send('result', { pageKey: 'orders', result: backfillResult });
+  if (salesKeeper) {
+    send('result', { pageKey: 'salesKeeper', result: { mode: 'backfill', storeCount: Object.keys(allStoreResults).length, totalOrders: grandOrders } });
+  }
+
+  return backfillResult;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -803,7 +1318,7 @@ async function run(config) {
   })();
 
   if (isBackfill) {
-    console.log('[ddangyoyo-worker] backfill 모드 시작 (90일 전 ~ 어제)');
+    console.log('[ddangyoyo-worker] backfill 모드 시작 (D-1 기준 2달)');
   }
 
   const chromePath = findChromePath();
@@ -875,64 +1390,41 @@ async function run(config) {
 
   console.log('[worker] 로그인 성공!');
 
-  // ── backfill 모드: 주문내역 페이지에서 날짜 범위 설정 ──
+  // ── backfill 모드: POC 검증된 API body 직접 수정 방식 ──
   if (isBackfill) {
-    send('status', { status: 'crawling', page: 'orders', mode: 'backfill' });
-    console.log('[ddangyoyo-worker] 주문내역 메뉴 이동 후 날짜 범위 설정');
+    try {
+      await runBackfill(page, config);
+    } catch (err) {
+      console.error('[worker-backfill] 에러:', err.message, err.stack);
+      send('error', { error: `backfill 실패: ${err.message}` });
+    }
 
-    // 주문내역 메뉴 클릭 (extractOrders 내부에서도 하지만, 날짜 설정을 먼저 해야 함)
-    await page.evaluate(() => {
-      const links = Array.from(document.querySelectorAll('a'));
-      links.find(a => a.innerText.trim() === '주문내역')?.click();
-    });
-    await sleep(5000);
-
-    // 날짜 범위 설정 (90일 전 ~ 어제)
-    const backfillRange = await setBackfillDateRange(page);
-    console.log(`[ddangyoyo-worker] backfill 범위 설정 완료: ${backfillRange.startDate} ~ ${backfillRange.endDate}`);
+    send('done', {});
+    await browser.close();
+    process.exit(0);
+    return; // early return for backfill
   }
 
-  // ── 주문내역 크롤링 ──
+  // ── 일반 모드: 주문내역 크롤링 (기존 DOM 방식 유지) ──
   let orderResult = null;
   send('status', { status: 'crawling', page: 'orders' });
   try {
-    if (isBackfill) {
-      // backfill 모드: 이미 날짜 범위 설정 + 조회 완료, 데이터만 추출
-      // 메뉴 클릭 생략 (이미 주문내역 페이지에서 날짜 설정 + 조회 완료)
-      orderResult = await extractOrders(page, { skipNavigation: true });
-    } else {
-      orderResult = await extractOrders(page);
-    }
+    orderResult = await extractOrders(page);
 
-    if (isBackfill) {
-      // backfill 모드: 날짜 필터링 하지 않음 (전체 기간 주문 수집)
-      console.log(`[ddangyoyo-worker] backfill 전체 주문: ${orderResult?.orders?.length || 0}건`);
-
-      // 날짜별 그룹핑 요약 로그
-      if (orderResult?.orders?.length > 0) {
-        const groups = groupOrdersByDate(orderResult.orders);
-        const dates = Object.keys(groups).sort();
-        console.log(`[ddangyoyo-worker] backfill 날짜 그룹: ${dates.length}개 날짜`);
-        for (const date of dates) {
-          console.log(`[ddangyoyo-worker]   ${date}: ${groups[date].length}건`);
-        }
-      }
-    } else {
-      // 일반 모드: 날짜 필터링 (대상일자 주문만)
-      if (orderResult?.orders?.length > 0 && crawlDate) {
-        const dateStr = crawlDate.replace(/-/g, '.');
-        const before = orderResult.orders.length;
-        orderResult.orders = orderResult.orders.filter(o => {
-          // date 형식: "2026.03.12(목)18:54:50"
-          return (o.date || '').includes(dateStr);
-        });
-        console.log(`[worker] 날짜 필터(${crawlDate}): ${before}건 → ${orderResult.orders.length}건`);
-        // 요약 업데이트
-        if (orderResult.summary) {
-          orderResult.summary['주문수'] = String(orderResult.orders.length);
-          const totalAmt = orderResult.orders.reduce((s, o) => s + (parseInt(String(o.amount || '0').replace(/,/g, ''), 10) || 0), 0);
-          orderResult.summary['결제금액'] = totalAmt.toLocaleString();
-        }
+    // 일반 모드: 날짜 필터링 (대상일자 주문만)
+    if (orderResult?.orders?.length > 0 && crawlDate) {
+      const dateStr = crawlDate.replace(/-/g, '.');
+      const before = orderResult.orders.length;
+      orderResult.orders = orderResult.orders.filter(o => {
+        // date 형식: "2026.03.12(목)18:54:50"
+        return (o.date || '').includes(dateStr);
+      });
+      console.log(`[worker] 날짜 필터(${crawlDate}): ${before}건 → ${orderResult.orders.length}건`);
+      // 요약 업데이트
+      if (orderResult.summary) {
+        orderResult.summary['주문수'] = String(orderResult.orders.length);
+        const totalAmt = orderResult.orders.reduce((s, o) => s + (parseInt(String(o.amount || '0').replace(/,/g, ''), 10) || 0), 0);
+        orderResult.summary['결제금액'] = totalAmt.toLocaleString();
       }
     }
 
@@ -948,7 +1440,7 @@ async function run(config) {
     send('page-error', { pageKey: 'orders', error: err.message });
   }
 
-  // ── 매출지킴이 전송 ──
+  // ── 매출지킴이 전송 (일반 모드) ──
   if (salesKeeper && orderResult?.success) {
     try {
       // 가맹점번호를 platformStoreId로 사용
@@ -958,29 +1450,17 @@ async function run(config) {
         return m ? m[1] : '';
       }) || '1237016'; // 폴백: 고기왕김치찜 가맹점번호
 
-      if (isBackfill) {
-        // backfill 모드: 날짜별 그룹핑 후 각 날짜별 전송
-        console.log('[ddangyoyo-worker] backfill 날짜별 전송 시작');
-        const backfillResults = await sendBackfillToSalesKeeper(
-          salesKeeper,
-          platformStoreId,
-          brandName || '',
-          orderResult?.orders || [],
-        );
-        send('result', { pageKey: 'salesKeeper', result: { mode: 'backfill', results: backfillResults } });
-      } else {
-        // 일반 모드: 단일 날짜 전송
-        const sendResult = await sendToSalesKeeper(
-          salesKeeper,
-          crawlDate,
-          platformStoreId,
-          brandName || '',
-          orderResult?.orders?.length || 0,
-          null,
-          orderResult?.orders || [],
-        );
-        send('result', { pageKey: 'salesKeeper', result: sendResult });
-      }
+      // 일반 모드: 단일 날짜 전송
+      const sendResult = await sendToSalesKeeper(
+        salesKeeper,
+        crawlDate,
+        platformStoreId,
+        brandName || '',
+        orderResult?.orders?.length || 0,
+        null,
+        orderResult?.orders || [],
+      );
+      send('result', { pageKey: 'salesKeeper', result: sendResult });
     } catch (sendErr) {
       console.error('[worker] 매출지킴이 전송 실패:', sendErr.message);
       send('page-error', { pageKey: 'salesKeeper', error: sendErr.message });

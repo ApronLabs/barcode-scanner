@@ -18,7 +18,8 @@
     "electron-updater": "^6.3.9",
     "node-global-key-listener": "^0.3.0",
     "rebrowser-puppeteer-core": "^24.8.1",
-    "serialport": "^13.0.0"
+    "serialport": "^13.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",

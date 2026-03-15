@@ -340,14 +340,14 @@ function getBaeminDateFilterScript(targetDate) {
 
 // ─── 배민 API 인터셉트 설정 스크립트 ─────────────────────────────
 // self-api.baemin.com API 응답을 캡처하는 fetch/XHR monkey-patch
+// POC v2 기반: 헤더 캡처 포함 (XHR API 직접 호출에 필요)
 function getBaeminInterceptScript() {
   return `
     (function() {
-      if (window._baeminInterceptInstalled) return true;
-      window._baeminInterceptInstalled = true;
-      window._baeminCapturedResponses = [];
+      if (window._baeminIntercepted) return true;
+      window._baeminIntercepted = true;
+      window._baeminApiCaptures = [];
 
-      // fetch 인터셉트
       const origFetch = window.fetch;
       window.fetch = async function(...args) {
         const response = await origFetch.apply(this, args);
@@ -358,19 +358,25 @@ function getBaeminInterceptScript() {
             const text = await clone.text();
             try {
               const json = JSON.parse(text);
-              window._baeminCapturedResponses.push({ url, data: json, ts: Date.now() });
+              window._baeminApiCaptures.push({ url, data: json, ts: Date.now() });
+              console.log('[intercept] fetch 캡처: ' + url.substring(0, 120));
             } catch {}
           } catch {}
         }
         return response;
       };
 
-      // XMLHttpRequest 인터셉트
       const origXHROpen = XMLHttpRequest.prototype.open;
       const origXHRSend = XMLHttpRequest.prototype.send;
+      const origXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
       XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._interceptUrl = url;
+        this._interceptHeaders = {};
         return origXHROpen.call(this, method, url, ...rest);
+      };
+      XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        if (this._interceptHeaders) this._interceptHeaders[name] = value;
+        return origXHRSetHeader.call(this, name, value);
       };
       XMLHttpRequest.prototype.send = function(...args) {
         this.addEventListener('load', function() {
@@ -378,7 +384,8 @@ function getBaeminInterceptScript() {
           if (url.includes('self-api.baemin.com') || url.includes('/api/')) {
             try {
               const json = JSON.parse(this.responseText);
-              window._baeminCapturedResponses.push({ url, data: json, ts: Date.now() });
+              window._baeminApiCaptures.push({ url, data: json, headers: this._interceptHeaders, ts: Date.now() });
+              console.log('[intercept] XHR 캡처: ' + url.substring(0, 120));
             } catch {}
           }
         });
@@ -492,41 +499,38 @@ function getYogiyoDateFilterScript(targetDate) {
 
 // ─── 요기요 API 인터셉트 설정 스크립트 ───────────────────────────
 // ceo-api.yogiyo.co.kr API 응답을 캡처하는 fetch/XHR monkey-patch
+// POC v2 기반: 헤더/body/method 캡처 + _ygOrdersRequest 저장 (페이지네이션 재현용)
 function getYogiyoInterceptScript() {
   return `
     (function() {
-      if (window._yogiyoInterceptInstalled) return true;
-      window._yogiyoInterceptInstalled = true;
-      window._yogiyoCapturedResponses = [];
-      window._yogiyoAuthHeaders = {};
+      if (window._ygIntercepted) return true;
+      window._ygIntercepted = true;
+      window._ygCaptures = [];
+      window._ygAuthHeaders = {};
+      window._ygOrdersRequest = null;
 
       const origFetch = window.fetch;
       window.fetch = async function(...args) {
         const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-
-        // API 요청의 인증 헤더 캡처 (order_detail 호출에 재사용)
+        const opts = args[1] || {};
         if (url.includes('ceo-api.yogiyo.co.kr') || url.includes('yogiyo')) {
           try {
-            const reqInit = args[1] || {};
-            const h = reqInit.headers;
+            const h = opts.headers;
             if (h) {
-              if (h instanceof Headers) {
-                h.forEach((v, k) => { window._yogiyoAuthHeaders[k.toLowerCase()] = v; });
-              } else if (typeof h === 'object') {
-                Object.entries(h).forEach(([k, v]) => { window._yogiyoAuthHeaders[k.toLowerCase()] = v; });
-              }
+              if (h instanceof Headers) h.forEach((v, k) => { window._ygAuthHeaders[k.toLowerCase()] = v; });
+              else if (typeof h === 'object') Object.entries(h).forEach(([k, v]) => { window._ygAuthHeaders[k.toLowerCase()] = v; });
             }
           } catch {}
         }
-
         const response = await origFetch.apply(this, args);
-        if (url.includes('ceo-api.yogiyo.co.kr') || url.includes('yogiyo')) {
+        if (url.includes('ceo-api.yogiyo.co.kr') || url.includes('yogiyo') || url.includes('/proxy/')) {
           try {
             const clone = response.clone();
             const text = await clone.text();
             try {
               const json = JSON.parse(text);
-              window._yogiyoCapturedResponses.push({ url, data: json, ts: Date.now() });
+              window._ygCaptures.push({ url, data: json, ts: Date.now(), method: opts.method || 'GET', body: opts.body || null });
+              console.log('[intercept] fetch: ' + url.substring(0, 150));
             } catch {}
           } catch {}
         }
@@ -535,27 +539,41 @@ function getYogiyoInterceptScript() {
 
       const origXHROpen = XMLHttpRequest.prototype.open;
       const origXHRSend = XMLHttpRequest.prototype.send;
+      const origXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
       XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._interceptUrl = url;
+        this._interceptMethod = method;
+        this._interceptHeaders = {};
         return origXHROpen.call(this, method, url, ...rest);
       };
+      XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        if (this._interceptHeaders) this._interceptHeaders[name.toLowerCase()] = value;
+        return origXHRSetHeader.call(this, name, value);
+      };
       XMLHttpRequest.prototype.send = function(...args) {
-        // XHR 요청 헤더도 캡처
-        const origSetHeader = this.setRequestHeader.bind(this);
-        const capturedHeaders = {};
-        this.setRequestHeader = function(name, value) {
-          capturedHeaders[name.toLowerCase()] = value;
-          return origSetHeader(name, value);
-        };
-
+        const sendBody = args[0] || null;
+        const method = this._interceptMethod || 'GET';
         this.addEventListener('load', function() {
           const url = this._interceptUrl || '';
-          if (url.includes('ceo-api.yogiyo.co.kr') || url.includes('yogiyo')) {
-            // 헤더 병합
-            Object.assign(window._yogiyoAuthHeaders, capturedHeaders);
+          if (url.includes('ceo-api.yogiyo.co.kr') || url.includes('yogiyo') || url.includes('/proxy/')) {
+            if (this._interceptHeaders) {
+              Object.assign(window._ygAuthHeaders, this._interceptHeaders);
+            }
             try {
               const json = JSON.parse(this.responseText);
-              window._yogiyoCapturedResponses.push({ url, data: json, ts: Date.now() });
+              const captureEntry = { url, data: json, ts: Date.now(), method, body: sendBody, xhrHeaders: {...(this._interceptHeaders || {})} };
+              window._ygCaptures.push(captureEntry);
+              console.log('[intercept] XHR(' + method + '): ' + url.substring(0, 150));
+              if (url.includes('/proxy/orders') && (json.orders || json.results)) {
+                window._ygOrdersRequest = {
+                  url, method, body: sendBody,
+                  headers: {...(this._interceptHeaders || {})},
+                  count: json.count,
+                  next: json.next || null,
+                  responseUrl: this.responseURL || url,
+                };
+                console.log('[intercept] 주문API 저장: ' + method + ' ' + url);
+              }
             } catch {}
           }
         });
@@ -564,6 +582,304 @@ function getYogiyoInterceptScript() {
 
       true;
     })();
+  `;
+}
+
+// ─── 요기요 캡처 초기화 스크립트 (매장 전환 시) ─────────────────────
+function getYogiyoResetCapturesScript() {
+  return `
+    (function() {
+      window._ygCaptures = [];
+      window._ygOrdersRequest = null;
+      console.log('[intercept] 캡처 초기화 완료');
+    })()
+  `;
+}
+
+// ─── 요기요 매장 리스트 추출 스크립트 (사이드바) ─────────────────────
+function getYogiyoStoreListScript() {
+  return `
+    (async function() {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      console.log('[intercept] 매장 리스트 추출 시작...');
+
+      // 사이드바 상단의 매장명/ID 영역 찾기 — 클릭하면 드롭다운 열림
+      const allElements = document.querySelectorAll('div, span, button, a, li, p');
+      let storeToggle = null;
+
+      // 방법1: "ID." 텍스트를 포함하는 요소의 부모 클릭
+      for (const el of allElements) {
+        const text = (el.innerText || '').trim();
+        if (text.includes('ID.') && text.includes('계약') && el.offsetParent !== null) {
+          let clickable = el;
+          for (let p = el; p && p !== document.body; p = p.parentElement) {
+            if (p.tagName === 'BUTTON' || p.tagName === 'A' || p.getAttribute('role') === 'button' ||
+                p.style?.cursor === 'pointer' || p.onclick) {
+              clickable = p;
+              break;
+            }
+          }
+          storeToggle = clickable;
+          console.log('[intercept] 매장 토글 찾음: ' + text.substring(0, 60));
+          break;
+        }
+      }
+
+      if (!storeToggle) {
+        const sidebar = document.querySelector('[class*="sidebar"], [class*="side-bar"], nav, aside');
+        if (sidebar) {
+          const firstClickable = sidebar.querySelector('button, a, [role="button"], div[class*="store"], div[class*="shop"]');
+          if (firstClickable) {
+            storeToggle = firstClickable;
+            console.log('[intercept] 사이드바 첫 클릭요소: ' + (firstClickable.innerText || '').substring(0, 60));
+          }
+        }
+      }
+
+      if (!storeToggle) {
+        console.log('[intercept] 매장 토글 못 찾음');
+        return { stores: [], error: 'store toggle not found' };
+      }
+
+      storeToggle.click();
+      await sleep(2000);
+
+      // 매장 리스트 수집 — "ID. XXXXXXX" 패턴을 가진 모든 요소
+      const stores = [];
+      const storeElements = document.querySelectorAll('div, span, li, a, button, p');
+      const seen = new Set();
+      for (const el of storeElements) {
+        const text = (el.innerText || '').trim();
+        if (!text.includes('ID.') || !text.match(/ID\\.\\s*\\d+/) || el.offsetParent === null) continue;
+        if (text.length > 200) continue;
+        const idMatch = text.match(/ID\\.\\s*(\\d+)/);
+        if (!idMatch) continue;
+        const storeId = idMatch[1];
+        if (seen.has(storeId)) continue;
+        seen.add(storeId);
+        let storeName = text.split('ID.')[0].trim();
+        storeName = storeName.replace(/[·\\-]\\s*$/, '').trim();
+        const isSelected = text.includes('\\u2713') || text.includes('\\u2714') ||
+          el.querySelector('[class*="check"], [class*="selected"]') !== null ||
+          (el.className || '').includes('selected') || (el.className || '').includes('active');
+        stores.push({ storeId, storeName: storeName || 'Unknown', isSelected, elementText: text.substring(0, 100) });
+        console.log('[intercept] 매장: ' + storeName + ' (ID: ' + storeId + ')' + (isSelected ? ' [선택됨]' : ''));
+      }
+
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      await sleep(500);
+      console.log('[intercept] 매장 ' + stores.length + '개 발견');
+      return { stores };
+    })()
+  `;
+}
+
+// ─── 요기요 매장 선택 스크립트 (사이드바 드롭다운에서 특정 매장 클릭) ──
+function getYogiyoSelectStoreScript(storeId) {
+  return `
+    (async function() {
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const targetStoreId = ${JSON.stringify(storeId)};
+      console.log('[intercept] 매장 전환: ID=' + targetStoreId);
+
+      const allElements = document.querySelectorAll('div, span, button, a, li, p');
+      let storeToggle = null;
+      for (const el of allElements) {
+        const text = (el.innerText || '').trim();
+        if (text.includes('ID.') && text.includes('계약') && el.offsetParent !== null) {
+          let clickable = el;
+          for (let p = el; p && p !== document.body; p = p.parentElement) {
+            if (p.tagName === 'BUTTON' || p.tagName === 'A' || p.getAttribute('role') === 'button' ||
+                p.style?.cursor === 'pointer' || p.onclick) {
+              clickable = p;
+              break;
+            }
+          }
+          storeToggle = clickable;
+          break;
+        }
+      }
+      if (!storeToggle) {
+        const sidebar = document.querySelector('[class*="sidebar"], [class*="side-bar"], nav, aside');
+        if (sidebar) {
+          const firstClickable = sidebar.querySelector('button, a, [role="button"], div[class*="store"], div[class*="shop"]');
+          if (firstClickable) storeToggle = firstClickable;
+        }
+      }
+      if (!storeToggle) return { success: false, error: 'store toggle not found' };
+
+      storeToggle.click();
+      await sleep(2000);
+
+      const candidates = document.querySelectorAll('div, span, li, a, button, p');
+      let clicked = false;
+      for (const el of candidates) {
+        const text = (el.innerText || '').trim();
+        if (!text.includes('ID.') || el.offsetParent === null) continue;
+        if (text.length > 200) continue;
+        const m = text.match(/ID\\.\\s*(\\d+)/);
+        if (m && m[1] === targetStoreId) {
+          if (text.includes('\\u2713') || text.includes('\\u2714') ||
+              (el.className || '').includes('selected') || (el.className || '').includes('active')) {
+            console.log('[intercept] 이미 선택된 매장: ID=' + targetStoreId);
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+            await sleep(500);
+            return { success: true, alreadySelected: true };
+          }
+          el.click();
+          clicked = true;
+          console.log('[intercept] 매장 클릭: ' + text.substring(0, 60));
+          break;
+        }
+      }
+
+      if (!clicked) {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+        return { success: false, error: 'store ID not found in dropdown: ' + targetStoreId };
+      }
+
+      await sleep(5000);
+      console.log('[intercept] 매장 전환 완료: ID=' + targetStoreId);
+      return { success: true };
+    })()
+  `;
+}
+
+// ─── 요기요 백필 날짜 필터 스크립트 (직접설정: startDate ~ endDate) ──
+function getYogiyoBackfillDateFilterScript(startDate, endDate) {
+  return `
+    (async function() {
+      const startDate = ${JSON.stringify(startDate)};
+      const endDate = ${JSON.stringify(endDate)};
+      const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+      const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      console.log('[intercept] 날짜 필터: ' + startDate + ' ~ ' + endDate);
+
+      // 1. react-datepicker input click
+      const container = document.querySelector('.react-datepicker__input-container');
+      if (!container) return { success: false, error: 'react-datepicker 못 찾음' };
+      const input = container.querySelector('input');
+      if (!input) return { success: false, error: 'datepicker input 못 찾음' };
+      input.focus(); input.click();
+      console.log('[intercept] 드롭다운 열기: ' + input.value);
+      await sleep(1500);
+
+      // 2. "직접설정" 클릭
+      const customOpt = Array.from(document.querySelectorAll('div, span, li, button'))
+        .find(el => el.innerText.trim() === '직접설정' && el.offsetParent !== null && el.children.length === 0);
+      if (customOpt) {
+        customOpt.click();
+        console.log('[intercept] 직접설정 클릭');
+        await sleep(2000);
+      } else {
+        console.log('[intercept] 직접설정 못 찾음');
+        return { success: false, error: '직접설정 옵션 못 찾음' };
+      }
+
+      function getCurrentCalendarMonth() {
+        const headerEls = document.querySelectorAll('.react-datepicker__header--custom');
+        const months = [];
+        headerEls.forEach(el => {
+          const text = el.innerText.trim();
+          const m = text.match(/(\\d{4})년\\s*(\\d{1,2})월/);
+          if (m) months.push({ year: parseInt(m[1]), month: parseInt(m[2]), text: m[0] });
+        });
+        if (months.length > 0) return months;
+        const monthEls = document.querySelectorAll('.react-datepicker__current-month');
+        monthEls.forEach(el => {
+          const text = el.innerText.trim();
+          const m = text.match(/(\\d{4})년\\s*(\\d{1,2})월/) || text.match(/(\\d{4})\\.(\\d{1,2})/);
+          if (m) months.push({ year: parseInt(m[1]), month: parseInt(m[2]), text: m[0] });
+        });
+        return months;
+      }
+
+      async function clickPrev() {
+        const prevBtn = document.querySelector('.react-datepicker__navigation--previous, [class*="navigation--previous"]')
+          || Array.from(document.querySelectorAll('button')).find(b => {
+            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+            const text = (b.innerText || '').trim();
+            return aria.includes('previous') || aria.includes('이전') || text === '<' || text === '\\u2039' || text === '<<';
+          });
+        if (prevBtn) { prevBtn.click(); await sleep(400); return true; }
+        return false;
+      }
+
+      async function clickNext() {
+        const nextBtn = document.querySelector('.react-datepicker__navigation--next, [class*="navigation--next"]')
+          || Array.from(document.querySelectorAll('button')).find(b => {
+            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+            const text = (b.innerText || '').trim();
+            return aria.includes('next') || aria.includes('다음') || text === '>' || text === '\\u203A' || text === '>>';
+          });
+        if (nextBtn) { nextBtn.click(); await sleep(400); return true; }
+        return false;
+      }
+
+      function findAndClickDay(year, month, day) {
+        const dayEls = document.querySelectorAll('.react-datepicker__day');
+        for (const el of dayEls) {
+          const cls = el.className || '';
+          if (cls.includes('disabled') || cls.includes('outside')) continue;
+          const aria = el.getAttribute('aria-label') || '';
+          const n = parseInt(el.innerText?.trim(), 10);
+          if (aria.includes(month + '월') && aria.includes(day + '일') && n === day) {
+            el.click();
+            console.log('[intercept] 날짜 클릭: ' + year + '-' + month + '-' + day);
+            return true;
+          }
+        }
+        for (const el of dayEls) {
+          const cls = el.className || '';
+          if (cls.includes('disabled') || cls.includes('outside') || cls.includes('name')) continue;
+          const n = parseInt(el.innerText?.trim(), 10);
+          if (n === day && !isNaN(n)) {
+            el.click();
+            console.log('[intercept] 날짜 폴백 클릭: ' + year + '-' + month + '-' + day);
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // 시작일 선택
+      console.log('[intercept] 시작일 네비게이션: ' + startYear + '-' + startMonth);
+      for (let nav = 0; nav < 12; nav++) {
+        const months = getCurrentCalendarMonth();
+        const found = months.some(m => m.year === startYear && m.month === startMonth);
+        if (found) break;
+        if (!(await clickPrev())) break;
+      }
+      await sleep(500);
+      if (!findAndClickDay(startYear, startMonth, startDay)) {
+        return { success: false, error: '시작일 클릭 실패: ' + startDate };
+      }
+      await sleep(1000);
+
+      // 종료일 선택
+      console.log('[intercept] 종료일 네비게이션: ' + endYear + '-' + endMonth);
+      for (let nav = 0; nav < 12; nav++) {
+        const months = getCurrentCalendarMonth();
+        const found = months.some(m => m.year === endYear && m.month === endMonth);
+        if (found) break;
+        if (!(await clickNext())) break;
+      }
+      await sleep(500);
+      if (!findAndClickDay(endYear, endMonth, endDay)) {
+        return { success: false, error: '종료일 클릭 실패: ' + endDate };
+      }
+      await sleep(1000);
+
+      // 조회 클릭
+      await sleep(500);
+      const searchBtn = Array.from(document.querySelectorAll('button'))
+        .find(b => b.innerText.trim() === '조회' && b.offsetParent !== null);
+      if (searchBtn) { searchBtn.click(); console.log('[intercept] 조회 클릭'); await sleep(3000); }
+      else console.log('[intercept] 조회 버튼 못 찾음');
+
+      return { success: true, startDate, endDate };
+    })()
   `;
 }
 
@@ -788,207 +1104,16 @@ function getDdangyoyoLoginScript(loginId, loginPw) {
   `;
 }
 
-// ─── 배민 3개월 기간 범위 필터 스크립트 ───────────────────────────
-// /orders/history 페이지에서 "월" 탭 → "지난 3개월" 프리셋 선택
-// 플로우: 프로모션 팝업 닫기 → "날짜 직접 선택" → "월" 탭(radio) → "지난 3개월" → 적용
-function getBaeminRangeFilterScript() {
+// ─── 배민 팝업 닫기 스크립트 ─────────────────────────────────────
+// 주문내역 페이지의 프로모션 팝업을 닫는다
+function getBaeminDismissPopupScript() {
   return `
     (async function() {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-      console.log('[baemin-range] 3개월 기간 필터 시작');
-
-      // 1. 프로모션 팝업 닫기
-      const dismissBtn = Array.from(document.querySelectorAll('button'))
+      const btn = Array.from(document.querySelectorAll('button'))
         .find(b => b.innerText.trim() === '오늘 하루 보지 않기');
-      if (dismissBtn) { dismissBtn.click(); await sleep(1000); console.log('[baemin-range] 팝업 닫음'); }
-
-      // 2. "날짜 직접 선택" 버튼 클릭
-      const dateSelectBtn = Array.from(document.querySelectorAll('button'))
-        .find(el => el.innerText.includes('날짜 직접 선택'));
-      if (!dateSelectBtn) return { success: false, error: '날짜 직접 선택 버튼 못 찾음' };
-      dateSelectBtn.click();
-      console.log('[baemin-range] 날짜 직접 선택 클릭');
-      await sleep(2000);
-
-      // 3. "월" 탭 클릭 (radio value="monthly" 또는 텍스트 "월")
-      const monthlyRadio = document.querySelector('input[type="radio"][value="monthly"]');
-      if (monthlyRadio) {
-        const label = monthlyRadio.closest('label') || monthlyRadio.parentElement;
-        if (label) label.click(); else monthlyRadio.click();
-        console.log('[baemin-range] 월 탭 클릭 (radio value=monthly)');
-        await sleep(1000);
-      } else {
-        // 폴백: 텍스트 "월"인 라디오 라벨 찾기
-        const monthLabel = Array.from(document.querySelectorAll('label'))
-          .find(l => {
-            const text = l.innerText.trim();
-            return text === '월' || text === '월별';
-          });
-        if (monthLabel) {
-          monthLabel.click();
-          console.log('[baemin-range] 월 탭 클릭 (텍스트 폴백)');
-          await sleep(1000);
-        } else {
-          return { success: false, error: '월 탭 라디오 못 찾음' };
-        }
-      }
-
-      // 4. "지난 3개월" 라디오/라벨 클릭
-      const threeMonthLabel = Array.from(document.querySelectorAll('label, span, div, button'))
-        .find(el => {
-          const text = el.innerText.trim();
-          return text === '지난 3개월' && el.offsetParent !== null;
-        });
-      if (threeMonthLabel) {
-        threeMonthLabel.click();
-        console.log('[baemin-range] 지난 3개월 클릭');
-        await sleep(1000);
-      } else {
-        // 폴백: input[type="radio"] 중 가까운 텍스트에 "3개월" 포함
-        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
-        const threeMonthRadio = radios.find(r => {
-          const parent = r.closest('label') || r.parentElement;
-          return parent && parent.innerText.includes('3개월');
-        });
-        if (threeMonthRadio) {
-          const parent = threeMonthRadio.closest('label') || threeMonthRadio.parentElement;
-          if (parent) parent.click(); else threeMonthRadio.click();
-          console.log('[baemin-range] 지난 3개월 클릭 (라디오 폴백)');
-          await sleep(1000);
-        } else {
-          return { success: false, error: '지난 3개월 옵션 못 찾음' };
-        }
-      }
-
-      // 5. "적용" 버튼 클릭 (큰 파란 버튼, width > 200px)
-      const applyBtns = Array.from(document.querySelectorAll('button'))
-        .filter(b => b.innerText.trim() === '적용')
-        .map(b => ({ btn: b, w: b.getBoundingClientRect().width }));
-      const modalApply = applyBtns.find(a => a.w > 200) || applyBtns[0];
-      if (modalApply) {
-        modalApply.btn.click();
-        console.log('[baemin-range] 적용 클릭 (w=' + Math.round(modalApply.w) + ')');
-        await sleep(3000);
-      } else {
-        return { success: false, error: '적용 버튼 못 찾음' };
-      }
-
-      console.log('[baemin-range] 3개월 기간 필터 완료');
-      return { success: true, filterType: 'range', period: '3months' };
-    })()
-  `;
-}
-
-// ─── 요기요 기간 범위 필터 스크립트 ─────────────────────────────────
-// /order-history/list 페이지에서 "직접설정" → 시작일 선택 → 조회
-// 플로우: react-datepicker input click → "직접설정" → 월 네비게이션 → 시작일 클릭 → "조회"
-function getYogiyoRangeFilterScript(startDate) {
-  const dateJson = JSON.stringify(startDate);
-  return `
-    (async function() {
-      const startDate = ${dateJson};
-      const [targetYear, targetMonth, targetDay] = startDate.split('-').map(Number);
-      const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-      console.log('[yogiyo-range] 기간 필터 시작, startDate:', startDate);
-
-      // 1. react-datepicker input 클릭 → 캘린더 드롭다운 열기
-      const container = document.querySelector('.react-datepicker__input-container');
-      if (!container) return { success: false, error: 'react-datepicker__input-container 못 찾음' };
-      const input = container.querySelector('input');
-      if (!input) return { success: false, error: 'react-datepicker input 못 찾음' };
-      input.focus();
-      input.click();
-      console.log('[yogiyo-range] 드롭다운 열기:', input.value);
-      await sleep(1500);
-
-      // 2. "직접설정" 클릭
-      const customOption = Array.from(document.querySelectorAll('div, span, button'))
-        .find(el => el.innerText.trim() === '직접설정' && el.offsetParent !== null && el.children.length === 0);
-      if (customOption) {
-        customOption.click();
-        console.log('[yogiyo-range] 직접설정 클릭');
-        await sleep(2000);
-      } else {
-        return { success: false, error: '직접설정 옵션 못 찾음' };
-      }
-
-      // 3. 캘린더에서 시작일의 월로 이동 (이전 버튼으로 네비게이션)
-      for (let nav = 0; nav < 12; nav++) {
-        // 현재 캘린더 헤더에서 표시 중인 연월 확인
-        const monthHeader = document.querySelector('.react-datepicker__current-month')
-          || document.querySelector('[class*="react-datepicker__header"] [class*="current-month"]');
-        if (monthHeader) {
-          const headerText = monthHeader.innerText.trim();
-          console.log('[yogiyo-range] 현재 캘린더 월:', headerText);
-          // "2026년 3월" 또는 "March 2026" 형태
-          const korMatch = headerText.match(/(\\d{4})년\\s*(\\d{1,2})월/);
-          if (korMatch) {
-            const dispYear = Number(korMatch[1]);
-            const dispMonth = Number(korMatch[2]);
-            if (dispYear === targetYear && dispMonth === targetMonth) {
-              console.log('[yogiyo-range] 타겟 월 도달:', targetYear + '년 ' + targetMonth + '월');
-              break;
-            }
-          }
-        }
-
-        // 이전 달 버튼 클릭
-        const prevBtn = document.querySelector('.react-datepicker__navigation--previous, [class*="navigation--previous"]')
-          || Array.from(document.querySelectorAll('button'))
-            .find(b => (b.getAttribute('aria-label') || '').includes('Previous') || (b.getAttribute('aria-label') || '').includes('이전'));
-        if (prevBtn) {
-          prevBtn.click();
-          console.log('[yogiyo-range] 이전 달 이동');
-          await sleep(500);
-        } else {
-          console.log('[yogiyo-range] 이전 달 버튼 못 찾음');
-          break;
-        }
-      }
-
-      // 4. 시작일(startDate) 날짜 클릭
-      const findDayEl = () => {
-        return Array.from(document.querySelectorAll('[class*="react-datepicker__day"]'))
-          .find(el => {
-            const t = el.innerText?.trim();
-            const n = parseInt(t, 10);
-            if (n !== targetDay) return false;
-            const cls = el.className || '';
-            // disabled, outside-month 제외
-            if (cls.includes('disabled') || cls.includes('outside')) return false;
-            // aria-label로 정확한 월 확인
-            const aria = el.getAttribute('aria-label') || '';
-            if (aria && aria.includes(targetMonth + '월') && aria.includes(targetDay + '일')) return true;
-            // aria 없으면 숫자만 일치 + disabled 아닌 것
-            return n === targetDay;
-          });
-      };
-
-      const dayEl = findDayEl();
-      if (dayEl) {
-        dayEl.click();
-        console.log('[yogiyo-range] 시작일 클릭:', targetDay + '일');
-        await sleep(1000);
-      } else {
-        return { success: false, error: targetYear + '-' + targetMonth + '-' + targetDay + ' 날짜 버튼 못 찾음' };
-      }
-
-      // 5. "조회" 버튼 클릭
-      await sleep(500);
-      const searchBtn = Array.from(document.querySelectorAll('button'))
-        .find(b => b.innerText.trim() === '조회' && b.offsetParent !== null);
-      if (searchBtn) {
-        searchBtn.click();
-        console.log('[yogiyo-range] 조회 클릭');
-        await sleep(3000);
-      } else {
-        console.log('[yogiyo-range] 조회 버튼 못 찾음');
-      }
-
-      console.log('[yogiyo-range] 기간 필터 완료');
-      return { success: true, filterType: 'range', startDate };
+      if (btn) { btn.click(); await sleep(1000); console.log('[baemin] 팝업 닫음'); }
+      return { success: true };
     })()
   `;
 }
@@ -998,11 +1123,14 @@ module.exports = {
   getAutoLoginScript,
   getCheckLoginScript,
   getBaeminDateFilterScript,
-  getBaeminRangeFilterScript,
+  getBaeminDismissPopupScript,
   getBaeminInterceptScript,
   getYogiyoDateFilterScript,
-  getYogiyoRangeFilterScript,
   getYogiyoInterceptScript,
+  getYogiyoResetCapturesScript,
+  getYogiyoStoreListScript,
+  getYogiyoSelectStoreScript,
+  getYogiyoBackfillDateFilterScript,
   getCoupangeatsOrderExtractScript,
   getCoupangeatsSettlementExtractScript,
   getDdangyoyoInterceptScript,
