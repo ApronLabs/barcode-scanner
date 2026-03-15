@@ -49,20 +49,36 @@ async function loadStores() {
     return;
   }
 
-  storeGrid.innerHTML = stores.map((store) => {
+  storeGrid.innerHTML = '';
+  stores.forEach((store) => {
     const isLast = store.id === lastStoreId;
-    return `
-      <div class="store-card${isLast ? ' last-selected' : ''}" data-id="${store.id}" data-name="${store.name}">
-        <div class="store-name">${store.name}</div>
-        ${store.address ? `<div class="store-info">${store.address}</div>` : ''}
-        ${isLast ? '<span class="last-tag">최근 사용</span>' : ''}
-      </div>
-    `;
-  }).join('');
 
-  // Attach click handlers
-  document.querySelectorAll('.store-card').forEach((card) => {
+    const card = document.createElement('div');
+    card.className = `store-card${isLast ? ' last-selected' : ''}`;
+    card.dataset.id = store.id;
+    card.dataset.name = store.name;
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'store-name';
+    nameEl.textContent = store.name;
+    card.appendChild(nameEl);
+
+    if (store.address) {
+      const addrEl = document.createElement('div');
+      addrEl.className = 'store-info';
+      addrEl.textContent = store.address;
+      card.appendChild(addrEl);
+    }
+
+    if (isLast) {
+      const tag = document.createElement('span');
+      tag.className = 'last-tag';
+      tag.textContent = '최근 사용';
+      card.appendChild(tag);
+    }
+
     card.addEventListener('click', () => selectStore(card));
+    storeGrid.appendChild(card);
   });
 }
 

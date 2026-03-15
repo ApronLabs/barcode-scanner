@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('get-config'),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   getKeyListenerStatus: () => ipcRenderer.invoke('get-key-listener-status'),
-  onBarcodeScanned: (callback) => ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode)),
-  onSessionExpired: (callback) => ipcRenderer.on('session-expired', () => callback()),
+  onBarcodeScanned: (callback) => {
+    ipcRenderer.removeAllListeners('barcode-scanned');
+    ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode));
+  },
+  onSessionExpired: (callback) => {
+    ipcRenderer.removeAllListeners('session-expired');
+    ipcRenderer.on('session-expired', () => callback());
+  },
 });

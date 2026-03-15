@@ -20,6 +20,7 @@ let lastProcessedBarcode = '';
 let lastProcessedTime = 0;
 let isProcessing = false;
 let useGlobalKeyListener = false;
+let audioCtx = null;
 
 const modeText = { auto: '자동 감지', input: '입고', output: '출고' };
 
@@ -77,7 +78,8 @@ function setMode(mode) {
   document.querySelectorAll('.mode-btn').forEach((b) => b.classList.remove('active'));
   document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
 
-  scanLabel.textContent = `바코드를 스캔하세요 (${modeText[mode]})`;
+  const suffix = useGlobalKeyListener ? ' - 백그라운드 감지 중' : '';
+  scanLabel.textContent = `바코드를 스캔하세요 (${modeText[mode]})${suffix}`;
 
   document.body.classList.remove('output-mode');
   if (mode === 'output') {
@@ -139,7 +141,7 @@ document.addEventListener('click', () => {
 async function processBarcode(rawBarcode) {
   // Duplicate guard (same barcode within 1s)
   const now = Date.now();
-  if (rawBarcode === lastProcessedBarcode && now - lastProcessedTime < 1000) {
+  if (rawBarcode === lastProcessedBarcode && now - lastProcessedTime < 500) {
     barcodeInput.value = '';
     return;
   }
@@ -295,7 +297,7 @@ function renderHistory() {
 // Sound
 function playSound(type) {
   try {
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
 

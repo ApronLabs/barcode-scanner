@@ -121,7 +121,7 @@ function processKeyEvent(event) {
   if (isFastInput) {
     fastKeyCount++;
   } else {
-    if (keyBuffer.length > 0 && fastKeyCount < 2) {
+    if (keyBuffer.length > 0) {
       keyBuffer = '';
       fastKeyCount = 0;
     }
