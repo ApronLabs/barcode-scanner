@@ -1,13 +1,15 @@
-const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
-const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo'];
-const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요' };
+const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
+const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
+const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요', okpos: 'OKPOS' };
 const PAGE_NAMES = {
   orderHistory: '주문내역', orders: '주문내역', settlement: '정산',
-  billing: '정산', sales: '매출', generic: '전체',
+  billing: '정산', sales: '매출', generic: '전체', default: '주문내역',
+  okpos: '매출',
 };
 
 let allResults = {};
 let activeTab = null;
+let activeShopTab = {}; // { 'baemin-orderHistory': 'shopName' }
 
 // ── 플랫폼 카드 상태 업데이트 ──
 function updatePlatformCard(site) {
@@ -102,6 +104,7 @@ document.getElementById('btnAutoCrawl').addEventListener('click', async () => {
 
   allResults = {};
   activeTab = null;
+  activeShopTab = {};
   document.getElementById('result-area').style.display = 'none';
 
   // 계정이 등록된 크롤링 대상만 필터
@@ -208,6 +211,22 @@ window.crawler.onCrawlError((data) => {
   document.getElementById('status').textContent = `[${data.site}${data.page ? '/' + data.page : ''}] ${data.error}`;
 });
 
+// ── 데이터에서 매장별 주문 추출 ──
+function extractShops(data) {
+  // shops 배열이 있으면 그대로 사용
+  if (data.shops && data.shops.length > 0) {
+    return data.shops.map(shop => ({
+      shopName: shop.shopName || '매장',
+      shopId: shop.shopId || '',
+      orders: shop.orders || [],
+    }));
+  }
+  // shops가 없으면 기존 apiOrders/orders를 단일 매장으로 묶음
+  const orders = data.apiOrders || data.orders || [];
+  if (orders.length === 0) return [];
+  return [{ shopName: '', shopId: '', orders }];
+}
+
 // ── 결과 렌더링 ──
 function renderResults() {
   const area = document.getElementById('result-area');
@@ -217,9 +236,10 @@ function renderResults() {
   const tabs = [];
   for (const [site, pages] of Object.entries(allResults)) {
     for (const [page, data] of Object.entries(pages)) {
+      if (page === 'salesKeeper') continue;
       const siteName = SITE_NAMES[site] || site;
       const pageName = PAGE_NAMES[page] || page;
-      tabs.push({ key: `${site}-${page}`, label: `${siteName} ${pageName}`, data });
+      tabs.push({ key: `${site}-${page}`, label: `${siteName} ${pageName}`, site, data });
     }
   }
 
@@ -237,11 +257,248 @@ function renderResults() {
   });
 
   const current = tabs.find(t => t.key === activeTab);
-  if (current) contentEl.innerHTML = renderData(current.data);
+  if (current) {
+    contentEl.innerHTML = renderDataWithShops(current.key, current.site, current.data);
+    // 매장 서브탭 이벤트 바인딩
+    contentEl.querySelectorAll('.shop-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        activeShopTab[current.key] = tab.dataset.shop;
+        renderResults();
+      });
+    });
+  }
+}
+
+// ── 매장별 서브탭 포함 렌더링 ──
+function renderDataWithShops(tabKey, site, data) {
+  const shops = extractShops(data);
+
+  // 매장이 없으면 기존 방식으로 렌더
+  if (shops.length === 0) {
+    return renderData(data);
+  }
+
+  // 매장이 1개이고 이름이 없으면 서브탭 없이 바로 테이블
+  if (shops.length === 1 && !shops[0].shopName) {
+    return renderData(data);
+  }
+
+  // 매장이 1개이고 이름이 있어도 서브탭 없이 바로 테이블 (매장명만 표시)
+  if (shops.length === 1) {
+    const shop = shops[0];
+    const shopData = { ...data, apiOrders: shop.orders, orders: shop.orders };
+    let html = `<div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:10px;">${escapeHtml(shop.shopName)}</div>`;
+    html += renderShopContent(site, shopData, shop.orders);
+    return html;
+  }
+
+  // 여러 매장: 서브탭 표시
+  const currentShop = activeShopTab[tabKey] || shops[0].shopName;
+  // 현재 선택된 매장이 목록에 없으면 첫번째로 fallback
+  const selectedShop = shops.find(s => s.shopName === currentShop) || shops[0];
+
+  let html = '<div class="shop-tabs">';
+  shops.forEach(shop => {
+    const isActive = shop.shopName === selectedShop.shopName;
+    const orderCount = shop.orders.length;
+    html += `<button class="shop-tab ${isActive ? 'active' : ''}" data-shop="${escapeHtml(shop.shopName)}">${escapeHtml(shop.shopName)} (${orderCount})</button>`;
+  });
+  html += '</div>';
+
+  // 선택된 매장의 데이터 렌더
+  const shopData = { ...data, apiOrders: selectedShop.orders, orders: selectedShop.orders };
+  html += renderShopContent(site, shopData, selectedShop.orders);
+
+  return html;
+}
+
+// ── 매장 데이터 렌더 (요약 + 테이블) ──
+function renderShopContent(site, shopData, orders) {
+  if (!orders || orders.length === 0) {
+    return '<p style="color:#888;font-size:12px;padding:16px 0;text-align:center;">주문 데이터가 없습니다.</p>';
+  }
+
+  // 요약 카드
+  let totalAmount = 0;
+  let totalSettlement = 0;
+  let totalReceiptCount = 0;
+  orders.forEach(o => {
+    const amt = o.salePrice || o.menuAmount || o.totalPayment || o.amount || 0;
+    totalAmount += amt;
+    totalSettlement += (o.actuallyAmount || o.settlementAmount || 0);
+    if (o.receiptCount) totalReceiptCount += o.receiptCount;
+  });
+
+  const isOkpos = site === 'okpos';
+
+  let html = '<div class="shop-summary">';
+  html += `<div class="shop-summary-item"><div class="shop-summary-label">${isOkpos ? '영수건수' : '주문 건수'}</div><div class="shop-summary-value">${isOkpos ? totalReceiptCount : orders.length}건</div></div>`;
+  html += `<div class="shop-summary-item"><div class="shop-summary-label">총 매출</div><div class="shop-summary-value">${totalAmount.toLocaleString()}원</div></div>`;
+  if (totalSettlement > 0) {
+    html += `<div class="shop-summary-item"><div class="shop-summary-label">${isOkpos ? '실매출' : '정산 예정'}</div><div class="shop-summary-value" style="color:#2563eb;">${totalSettlement.toLocaleString()}원</div></div>`;
+  }
+  html += '</div>';
+
+  // 테이블 렌더
+  html += renderData(shopData);
+  return html;
+}
+
+// ── 플랫폼별 데이터 정규화 (공통 표시 형식으로 변환) ──
+function normalizeForDisplay(data) {
+  const site = data.site;
+
+  // 배민: API 인터셉트 데이터 (주문+정산 동시 수집)
+  if (site === 'baemin') {
+    if (data.apiOrders?.length > 0) {
+      return data.apiOrders.map(o => {
+        const channelMap = { DELIVERY: '배달', TAKEOUT: '포장', HALL: '홀' };
+        const payMap = { BARO: '바로결제', MEET: '만나서결제' };
+        return {
+          date: o.orderedAt ? formatDateTime(o.orderedAt) : '',
+          orderNo: o.orderId || '',
+          orderSummary: o.menuSummary || '',
+          amount: o.menuAmount || 0,
+          channel: channelMap[o.channel] || o.channel || '',
+          paymentMethod: payMap[o.paymentMethod] || o.paymentMethod || '',
+          deliveryTip: o.deliveryTip || 0,
+          instantDiscount: o.instantDiscount || 0,
+          commissionFee: o.commissionFee || 0,
+          pgFee: o.pgFee || 0,
+          deliveryCost: o.deliveryCost || 0,
+          vat: o.vat || 0,
+          meetPayment: o.meetPayment || 0,
+          platformDiscount: o.platformDiscount || 0,
+          settlementAmount: o.settlementAmount || 0,
+          settlementDate: o.settlementDate || '',
+        };
+      });
+    }
+    return null;
+  }
+
+  // 요기요: API 인터셉트 데이터 (주문+정산 동시 수집)
+  if (site === 'yogiyo') {
+    if (data.apiOrders?.length > 0) {
+      return data.apiOrders.map(o => ({
+        date: o.orderedAt ? formatDateTime(o.orderedAt) : '',
+        orderNo: o.orderId || '',
+        orderSummary: o.menuSummary || '',
+        amount: o.menuAmount || 0,
+        channel: o.channel || '',
+        paymentMethod: o.paymentMethod || '',
+        commissionFee: o.commissionFee || 0,
+        pgFee: o.pgFee || 0,
+        deliveryCost: o.deliveryCost || 0,
+        adFee: o.adFee || 0,
+        vat: o.vat || 0,
+        storeDiscount: o.storeDiscount || 0,
+        settlementAmount: o.settlementAmount || 0,
+        settlementDate: o.settlementDate || '',
+      }));
+    }
+    return null;
+  }
+
+  // 쿠팡이츠: XHR API 데이터 (settlement 객체 포함)
+  if (site === 'coupangeats') {
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => {
+        // DOM 스크래핑 형식: date+time / API 형식: orderedAt
+        let dateStr = '';
+        if (o.orderedAt) {
+          dateStr = formatDateTime(o.orderedAt);
+        } else if (o.date && o.time) {
+          dateStr = o.time;
+        } else if (o.date) {
+          dateStr = o.date;
+        }
+
+        // settlement 객체에서 정산 상세 추출
+        const s = o.settlement || {};
+
+        return {
+          date: dateStr,
+          orderNo: o.orderId || '',
+          orderSummary: o.menuSummary || '',
+          amount: o.salePrice || o.totalPayment || o.amount || 0,
+          commissionFee: s.serviceSupplyPrice || o.commissionFee || 0,
+          pgFee: s.paymentSupplyPrice || o.pgFee || 0,
+          deliveryCost: s.deliverySupplyPrice || o.deliveryCost || 0,
+          adFee: s.advertisingSupplyPrice || o.adFee || 0,
+          storeDiscount: s.storePromotionAmount || o.storeDiscount || 0,
+          settlementAmount: o.actuallyAmount || o.settlementAmount || 0,
+          settlementDate: s.settlementDueDate || o.settlementDate || o.settlementStatus || '',
+        };
+      });
+    }
+    return null;
+  }
+
+  // 땡겨요: API 인터셉트 데이터
+  if (site === 'ddangyoyo') {
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => ({
+        date: o.orderedAt ? formatDateTime(o.orderedAt) : '',
+        orderNo: o.orderId || '',
+        orderSummary: o.menuSummary || '',
+        amount: o.menuAmount || 0,
+        channel: o.channel || '',
+        commissionFee: o.totalFee || 0,
+        settlementAmount: o.settlementAmount || 0,
+      }));
+    }
+    return null;
+  }
+
+  // OKPOS: POS 매출 데이터
+  if (site === 'okpos') {
+    const orders = data.apiOrders || data.orders;
+    if (orders?.length > 0) {
+      return orders.map(o => ({
+        date: o.date || '',
+        orderNo: '',
+        orderSummary: `영수 ${o.receiptCount || 0}건`,
+        amount: o.totalSaleAmount || 0,
+        commissionFee: 0,
+        pgFee: 0,
+        deliveryCost: 0,
+        settlementAmount: o.netSaleAmount || 0,
+        settlementDate: o.date || '',
+        // POS 전용
+        cardAmount: o.cardAmount || 0,
+        cashAmount: o.cashAmount || 0,
+        vatAmount: o.vatAmount || 0,
+      }));
+    }
+    return null;
+  }
+
+  return null;
+}
+
+function formatDateTime(isoStr) {
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const ampm = h >= 12 ? '오후' : '오전';
+    const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    return `${ampm} ${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  } catch {
+    return String(isoStr);
+  }
 }
 
 function renderData(data) {
-  if (data.orders && data.orders.length > 0) return renderOrdersTable(data);
+  // 플랫폼별 정규화된 주문 데이터 생성
+  const normalized = normalizeForDisplay(data);
+  if (normalized && normalized.length > 0) {
+    return renderNormalizedTable(data, normalized);
+  }
   if (data.tables && data.tables.length > 0) return data.tables.map(t => renderTable(t)).join('');
   if (data.items && data.items.length > 0) {
     return `<div style="font-size:12px;">${data.items.map((item, i) =>
@@ -251,30 +508,44 @@ function renderData(data) {
   return `<pre id="result-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
 }
 
-function renderOrdersTable(data) {
-  const { summary, orders } = data;
+function renderNormalizedTable(data, orders) {
   let html = '';
 
-  if (summary && Object.keys(summary).length > 0) {
+  // 요약 정보
+  if (data.summary && Object.keys(data.summary).length > 0) {
     html += '<div style="display:flex;gap:16px;margin-bottom:16px;">';
-    for (const [key, val] of Object.entries(summary)) {
+    for (const [key, val] of Object.entries(data.summary)) {
       const unit = key.includes('수') ? '건' : '원';
       html += `<div style="flex:1;background:#f0fdf4;border-radius:8px;padding:12px 16px;text-align:center;">
         <div style="font-size:11px;color:#666;margin-bottom:4px;">${escapeHtml(key)}</div>
-        <div style="font-size:18px;font-weight:700;color:#059669;">${escapeHtml(val)}${unit}</div>
+        <div style="font-size:18px;font-weight:700;color:#059669;">${escapeHtml(String(val))}${unit}</div>
       </div>`;
     }
     html += '</div>';
   }
 
-  const detailKeys = ['상점부담쿠폰금액', '중개이용료', '결제대행사수수료', '배달비', '부가세', '즉시할인금액', '정산예정금액'];
-  const detailHeaders = ['쿠폰', '중개이용료', '결제수수료', '배달비', '부가세', '즉시할인', '정산예정'];
+  // 정산 상세 표시 여부
+  const hasSettlement = orders.some(o => o.commissionFee || o.settlementAmount);
+  const allDetailKeys = ['commissionFee', 'pgFee', 'deliveryCost', 'adFee', 'vat', 'storeDiscount', 'instantDiscount', 'cupDeposit', 'favorableFee', 'platformDiscount', 'meetPayment', 'settlementAmount', 'settlementDate'];
+  const allDetailHeaders = ['중개이용료', '결제수수료', '배달비', '광고비', '부가세', '가게할인', '즉시할인', '일회용컵', '우대수수료', '플랫폼할인', '만나서결제', '정산예정', '정산일'];
+
+  // 데이터가 있는 컬럼만 표시 (settlementAmount/settlementDate는 항상 표시)
+  const alwaysShow = new Set(['settlementAmount', 'settlementDate']);
+  const activeIdx = [];
+  allDetailKeys.forEach((key, i) => {
+    if (alwaysShow.has(key) || orders.some(o => o[key])) activeIdx.push(i);
+  });
+  const detailKeys = activeIdx.map(i => allDetailKeys[i]);
+  const detailHeaders = activeIdx.map(i => allDetailHeaders[i]);
+  const detailColCount = detailKeys.length;
 
   html += '<div style="overflow-x:auto;">';
-  html += '<table class="order-table" style="min-width:900px;">';
+  html += `<table class="order-table" style="min-width:${hasSettlement ? (600 + detailColCount * 95) : '600'}px;">`;
+  const hasChannel = orders.some(o => o.channel || o.paymentMethod);
   html += '<thead><tr>';
   ['주문일', '주문번호', '주문내역', '매출액'].forEach(h => { html += `<th>${h}</th>`; });
-  detailHeaders.forEach(h => { html += `<th style="text-align:right;">${h}</th>`; });
+  if (hasChannel) ['유형', '결제'].forEach(h => { html += `<th>${h}</th>`; });
+  if (hasSettlement) detailHeaders.forEach(h => { html += `<th style="text-align:right;">${h}</th>`; });
   html += '</tr></thead><tbody>';
 
   let totalAmount = 0;
@@ -282,40 +553,63 @@ function renderOrdersTable(data) {
   detailKeys.forEach(k => { detailTotals[k] = 0; });
 
   orders.forEach(order => {
-    const amt = parseInt((order.amount || '0').replace(/,/g, ''), 10) || 0;
+    const amt = typeof order.amount === 'number' ? order.amount : (parseInt(String(order.amount || '0').replace(/,/g, ''), 10) || 0);
     totalAmount += amt;
     html += '<tr>';
     html += `<td style="white-space:nowrap;">${escapeHtml(order.date || '')}</td>`;
     html += `<td style="font-family:monospace;font-weight:600;">${escapeHtml(order.orderNo || '')}</td>`;
     html += `<td>${escapeHtml(order.orderSummary || '')}</td>`;
-    html += `<td class="amount" style="text-align:right;white-space:nowrap;">${escapeHtml(order.amount || '')}원</td>`;
-    detailKeys.forEach(key => {
-      const val = order.details?.[key];
-      if (val) {
-        const num = parseInt(val.replace(/,/g, ''), 10) || 0;
-        detailTotals[key] += num;
-        const color = num < 0 ? '#dc2626' : (key === '정산예정금액' ? '#2563eb' : '#374151');
-        const weight = key === '정산예정금액' ? '600' : '400';
-        html += `<td style="text-align:right;white-space:nowrap;color:${color};font-weight:${weight};">${escapeHtml(val)}원</td>`;
-      } else {
-        html += '<td style="text-align:right;color:#d1d5db;">-</td>';
-      }
-    });
+    html += `<td class="amount" style="text-align:right;white-space:nowrap;">${amt.toLocaleString()}원</td>`;
+    if (hasChannel) {
+      html += `<td style="white-space:nowrap;">${escapeHtml(order.channel || '')}</td>`;
+      html += `<td style="white-space:nowrap;">${escapeHtml(order.paymentMethod || '')}</td>`;
+    }
+
+    if (hasSettlement) {
+      detailKeys.forEach(key => {
+        if (key === 'settlementDate') {
+          html += `<td style="text-align:center;white-space:nowrap;font-size:11px;color:#6b7280;">${escapeHtml(order[key] || '-')}</td>`;
+          return;
+        }
+        const val = order[key] || 0;
+        detailTotals[key] += val;
+        if (val) {
+          const isSettlement = key === 'settlementAmount';
+          const isPositive = key === 'platformDiscount' || key === 'meetPayment';
+          const color = isSettlement ? '#2563eb' : isPositive ? '#059669' : '#dc2626';
+          const weight = isSettlement ? '600' : '400';
+          const displayVal = isSettlement || isPositive ? val : -Math.abs(val);
+          html += `<td style="text-align:right;white-space:nowrap;color:${color};font-weight:${weight};">${displayVal.toLocaleString()}원</td>`;
+        } else {
+          html += '<td style="text-align:right;color:#d1d5db;">-</td>';
+        }
+      });
+    }
     html += '</tr>';
   });
 
   html += '<tr class="total-row">';
-  html += `<td colspan="3" style="text-align:right;">합계 (${orders.length}건)</td>`;
+  const baseColspan = hasChannel ? 5 : 3;
+  html += `<td colspan="${baseColspan}" style="text-align:right;">합계 (${orders.length}건)</td>`;
   html += `<td class="amount" style="text-align:right;">${totalAmount.toLocaleString()}원</td>`;
-  detailKeys.forEach(key => {
-    const total = detailTotals[key];
-    if (total !== 0) {
-      const color = total < 0 ? '#dc2626' : (key === '정산예정금액' ? '#2563eb' : '#374151');
-      html += `<td style="text-align:right;font-weight:700;color:${color};">${total.toLocaleString()}원</td>`;
-    } else {
-      html += '<td style="text-align:right;color:#d1d5db;">-</td>';
-    }
-  });
+  if (hasSettlement) {
+    detailKeys.forEach(key => {
+      if (key === 'settlementDate') {
+        html += '<td></td>';
+        return;
+      }
+      const total = detailTotals[key];
+      if (total !== 0) {
+        const isSettlement = key === 'settlementAmount';
+        const isPositive = key === 'platformDiscount' || key === 'meetPayment';
+        const color = isSettlement ? '#2563eb' : isPositive ? '#059669' : '#dc2626';
+        const displayVal = isSettlement || isPositive ? total : -Math.abs(total);
+        html += `<td style="text-align:right;font-weight:700;color:${color};">${displayVal.toLocaleString()}원</td>`;
+      } else {
+        html += '<td style="text-align:right;color:#d1d5db;">-</td>';
+      }
+    });
+  }
   html += '</tr></tbody></table></div>';
   return html;
 }
@@ -370,12 +664,41 @@ document.getElementById('btnExport').addEventListener('click', async () => {
   URL.revokeObjectURL(url);
 });
 
+// ── 엑셀 내보내기 ──
+document.getElementById('btnExportExcel').addEventListener('click', async () => {
+  const { results, errors } = await window.crawler.getResults();
+  if (!results || Object.keys(results).length === 0) { alert('내보낼 데이터가 없습니다.'); return; }
+
+  const btn = document.getElementById('btnExportExcel');
+  btn.disabled = true;
+  btn.textContent = '저장 중...';
+
+  try {
+    const res = await window.crawler.exportExcel({
+      exportedAt: new Date().toISOString(),
+      results,
+      errors: errors || [],
+    });
+    if (res.success) {
+      document.getElementById('status').textContent = '엑셀 저장 완료: ' + res.path;
+    } else if (!res.cancelled) {
+      alert('엑셀 저장 실패: ' + (res.error || ''));
+    }
+  } catch (err) {
+    alert('엑셀 저장 실패: ' + err.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '엑셀 내보내기';
+});
+
 // ── 초기화 ──
 document.getElementById('btnClear').addEventListener('click', async () => {
   if (!confirm('결과를 모두 초기화하시겠습니까?')) return;
   await window.crawler.clearResults();
   allResults = {};
   activeTab = null;
+  activeShopTab = {};
   document.getElementById('result-area').style.display = 'none';
   document.getElementById('status').textContent = '초기화 완료';
   updateAllCards();
@@ -411,4 +734,66 @@ document.getElementById('btnClear').addEventListener('click', async () => {
     });
   }
   updateAllCards();
+
+  // 스케줄러 상태 로드
+  loadSchedulerStatus();
 })();
+
+// ── 스케줄러 상태 UI ──
+async function loadSchedulerStatus() {
+  try {
+    const status = await window.crawler.getSchedulerStatus();
+    updateSchedulerUI(status);
+  } catch {}
+}
+
+function updateSchedulerUI(status) {
+  const dot = document.getElementById('schedulerDot');
+  const info = document.getElementById('schedulerInfo');
+  if (!dot || !info) return;
+
+  if (status.enabled) {
+    dot.classList.add('active');
+    let text = '<strong>매일 오전 11시</strong> 자동 수집 활성';
+    if (status.lastRunDate) {
+      text += ` | 마지막 수집: ${status.lastRunDate}`;
+    }
+    info.innerHTML = text;
+  } else {
+    dot.classList.remove('active');
+    info.textContent = '자동 수집 비활성';
+  }
+
+  // 백필 상태
+  const backfillArea = document.getElementById('backfillArea');
+  if (status.isBackfilling && status.backfillProgress) {
+    const { total, completed, current } = status.backfillProgress;
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    backfillArea.style.display = 'block';
+    document.getElementById('backfillFill').style.width = pct + '%';
+    document.getElementById('backfillText').textContent =
+      `과거 데이터 수집 중: ${completed}/${total}일 완료${current ? ` (${current})` : ''}`;
+  } else if (backfillArea) {
+    backfillArea.style.display = 'none';
+  }
+}
+
+// 스케줄러 업데이트 이벤트 수신
+window.crawler.onSchedulerUpdate((data) => {
+  if (data.type === 'backfill-progress' || data.type === 'backfill-start') {
+    const backfillArea = document.getElementById('backfillArea');
+    if (backfillArea) backfillArea.style.display = 'block';
+    if (data.total != null && data.completed != null) {
+      const pct = data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0;
+      document.getElementById('backfillFill').style.width = pct + '%';
+      document.getElementById('backfillText').textContent =
+        `과거 데이터 수집 중: ${data.completed}/${data.total}일 완료${data.current ? ` (${data.current})` : ''}`;
+    }
+  } else if (data.type === 'backfill-done' || data.type === 'backfill-error') {
+    const backfillArea = document.getElementById('backfillArea');
+    if (backfillArea) backfillArea.style.display = 'none';
+    loadSchedulerStatus();
+  } else if (data.type === 'daily-done' || data.type === 'daily-error') {
+    loadSchedulerStatus();
+  }
+});

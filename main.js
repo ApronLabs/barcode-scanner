@@ -20,6 +20,7 @@ const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 const path = require('path');
 const { Crawler } = require('./scripts/crawler');
+const { AutoCrawlScheduler } = require('./scripts/scheduler');
 
 // 자동화 감지 우회: Electron/Chromium 플래그
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
@@ -32,6 +33,7 @@ app.commandLine.appendSwitch('accept-lang', 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7
 let crawler = null;
 let crawlResults = {};
 let crawlErrors = [];
+let scheduler = null;
 
 let Store = null;
 let store = null;
@@ -576,43 +578,49 @@ const crawlStatusNames = {
 };
 
 ipcMain.handle('trigger-crawl', async (_event, opts) => {
-  const { sites, credentials } = opts;
+  if (!scheduler) return { error: 'Scheduler not initialized' };
+
   crawlResults = {};
   crawlErrors = [];
 
-  if (crawler) crawler.destroy();
-  crawler = new Crawler(mainWindow, {
-    onStatus: (data) => {
-      const msg = `${crawlSiteNames[data.site] || data.site} ${data.page || ''} ${crawlStatusNames[data.status] || data.status}`;
-      try { mainWindow.webContents.send('status', msg); } catch {}
-      try { mainWindow.webContents.send('crawl-status', data); } catch {}
-      console.log('[crawler-status]', msg);
-    },
-    onResult: (data) => {
-      console.log('[crawler] 결과 수신:', data.site, data.pageType);
-      if (!crawlResults[data.site]) crawlResults[data.site] = {};
-      crawlResults[data.site][data.pageType || 'default'] = data;
-      try { mainWindow.webContents.send('crawl-result', data); } catch {}
-    },
-    onError: (data) => {
-      crawlErrors.push(data);
-      try { mainWindow.webContents.send('crawl-error', data); } catch {}
-    },
-    onComplete: (data) => {
-      try {
-        mainWindow.webContents.send('crawl-complete', {
-          results: crawlResults,
-          errors: crawlErrors,
-          ...data,
-        });
-      } catch {}
-      console.log('[crawler] 크롤링 완료');
-    },
-  });
-
   try {
-    await crawler.start(sites || ['baemin', 'yogiyo', 'coupangeats'], credentials || {});
-    return { success: true };
+    const result = await scheduler.runBackfillAndDaily({
+      source: 'manual',
+      sites: opts.sites,
+      credentials: opts.credentials,
+      onStatus: (msg) => {
+        const statusStr = typeof msg === 'object'
+          ? `${crawlSiteNames[msg.site] || msg.site || ''} ${msg.page || ''} ${crawlStatusNames[msg.status] || msg.status || ''}`
+          : String(msg);
+        try { mainWindow.webContents.send('status', statusStr); } catch {}
+        try { mainWindow.webContents.send('crawl-status', msg); } catch {}
+        console.log('[crawler-status]', statusStr);
+      },
+      onResult: (data) => {
+        console.log('[crawler] 결과 수신:', data.site, data.pageType);
+        if (data.site) {
+          if (!crawlResults[data.site]) crawlResults[data.site] = {};
+          crawlResults[data.site][data.pageType || 'default'] = data;
+        }
+        try { mainWindow.webContents.send('crawl-result', data); } catch {}
+      },
+      onError: (data) => {
+        crawlErrors.push(data);
+        try { mainWindow.webContents.send('crawl-error', data); } catch {}
+      },
+      onComplete: (data) => {
+        try {
+          mainWindow.webContents.send('crawl-complete', {
+            results: crawlResults,
+            errors: crawlErrors,
+            ...data,
+          });
+        } catch {}
+        console.log('[crawler] 크롤링 완료');
+      },
+    });
+
+    return result?.error ? { success: false, error: result.error } : { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -693,6 +701,23 @@ ipcMain.handle('clear-results', () => {
   return { success: true };
 });
 
+// IPC: 스케줄러 상태 조회
+ipcMain.handle('get-scheduler-status', () => {
+  if (!scheduler) return { enabled: false };
+  return scheduler.getStatus();
+});
+
+// IPC: 수동 백필 트리거
+ipcMain.handle('trigger-backfill', async () => {
+  if (!scheduler) return { success: false, error: '스케줄러 미초기화' };
+  try {
+    const result = await scheduler.runBackfillAndDaily({ source: 'manual' });
+    return result?.error ? { success: false, error: result.error } : { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // IPC: 크롤링 결과 JSON 파일 저장
 ipcMain.handle('save-crawl-json', async (_event, data) => {
   const fs = require('fs');
@@ -703,6 +728,156 @@ ipcMain.handle('save-crawl-json', async (_event, data) => {
     return { success: true, path: savePath };
   } catch (err) {
     console.error('[crawler] JSON 저장 실패:', err.message);
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC: 엑셀 내보내기
+ipcMain.handle('export-excel', async (_event, data) => {
+  const XLSX = require('xlsx');
+  const { dialog } = require('electron');
+
+  const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요' };
+
+  // 플랫폼별 주문 → 엑셀 행 변환
+  function orderToRow(site, o) {
+    if (site === 'baemin') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.channel || '',
+        '결제': o.paymentMethod || '',
+        '배달팁': o.deliveryTip || 0,
+        '즉시할인': o.instantDiscount || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '부가세': o.vat || 0,
+        '만나서결제': o.meetPayment || 0,
+        '플랫폼할인': o.platformDiscount || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'yogiyo') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.channel || '',
+        '결제': o.paymentMethod || '',
+        '배달비수입': o.deliveryIncome || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '광고비': o.adFee || 0,
+        '부가세': o.vat || 0,
+        '가게할인': o.storeDiscount || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'coupangeats') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.totalPayment || 0,
+        '중개이용료': o.commissionFee || 0,
+        '결제수수료': o.pgFee || 0,
+        '배달비': o.deliveryCost || 0,
+        '광고비': o.adFee || 0,
+        '부가세': o.vat || 0,
+        '가게할인': o.storeDiscount || 0,
+        '즉시할인': o.instantDiscount || 0,
+        '일회용컵': o.cupDeposit || 0,
+        '우대수수료': o.favorableFee || 0,
+        '정산예정': o.settlementAmount || 0,
+        '정산일': o.settlementDate || '',
+      };
+    } else if (site === 'ddangyoyo') {
+      return {
+        '주문일': o.orderedAt || '',
+        '주문번호': o.orderId || '',
+        '주문내역': o.menuSummary || '',
+        '매출액': o.menuAmount || 0,
+        '유형': o.orderType || '',
+        '정산예정': o.settlementAmount || 0,
+      };
+    }
+    return { ...o };
+  }
+
+  try {
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: '엑셀 내보내기',
+      defaultPath: `매출데이터_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+    });
+    if (!filePath) return { success: false, cancelled: true };
+
+    const wb = XLSX.utils.book_new();
+    const results = data.results || {};
+
+    // 매장별로 데이터 수집: { shopName: [{ 플랫폼, ...orderRow }] }
+    const shopMap = {};
+
+    for (const [site, pages] of Object.entries(results)) {
+      for (const [pageKey, pageData] of Object.entries(pages)) {
+        if (pageKey === 'salesKeeper') continue;
+        const siteName = SITE_NAMES[site] || site;
+
+        // shops 배열이 있으면 매장별로 분리
+        if (pageData.shops && pageData.shops.length > 0) {
+          for (const shop of pageData.shops) {
+            const shopName = shop.shopName || siteName;
+            if (!shopMap[shopName]) shopMap[shopName] = [];
+            (shop.orders || []).forEach(o => {
+              shopMap[shopName].push({ '플랫폼': siteName, ...orderToRow(site, o) });
+            });
+          }
+        } else {
+          // 기존 호환: shops 없으면 플랫폼명을 매장명으로
+          const orders = pageData.apiOrders || pageData.orders || [];
+          if (orders.length === 0) continue;
+          // 매장 구분 없으면 '전체'로 묶음
+          const shopName = '전체';
+          if (!shopMap[shopName]) shopMap[shopName] = [];
+          orders.forEach(o => {
+            shopMap[shopName].push({ '플랫폼': siteName, ...orderToRow(site, o) });
+          });
+        }
+      }
+    }
+
+    // 시트 생성: 매장별 시트
+    for (const [shopName, rows] of Object.entries(shopMap)) {
+      if (rows.length === 0) continue;
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+
+      // 컬럼 너비 자동 조절
+      const colWidths = Object.keys(rows[0] || {}).map(key => {
+        const maxLen = Math.max(key.length, ...rows.map(r => String(r[key] || '').length));
+        return { wch: Math.min(Math.max(maxLen + 2, 8), 30) };
+      });
+      ws['!cols'] = colWidths;
+
+      // 시트명은 31자 제한 (Excel 제한)
+      const sheetName = shopName.substring(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    }
+
+    if (wb.SheetNames.length === 0) {
+      return { success: false, error: '내보낼 데이터가 없습니다.' };
+    }
+
+    XLSX.writeFile(wb, filePath);
+    console.log('[crawler] 엑셀 저장:', filePath);
+    return { success: true, path: filePath };
+  } catch (err) {
+    console.error('[crawler] 엑셀 저장 실패:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -740,6 +915,38 @@ app.whenReady().then(async () => {
   createWindow();
   initGlobalKeyListener();
   startSerialPolling();
+
+  // 자동 크롤링 스케줄러
+  const schedulerStore = initStore();
+  scheduler = new AutoCrawlScheduler({
+    mainWindow,
+    store: schedulerStore,
+    authenticatedFetch,
+    getCredentials: async (storeId) => {
+      const s = initStore();
+      const serverUrl = s.get('serverUrl');
+      const sid = storeId || s.get('lastStoreId') || '';
+      if (!sid) return null;
+      try {
+        const url = `${serverUrl}/api/suppliers/platform-accounts?storeId=${encodeURIComponent(sid)}&withCredentials=true`;
+        const { unauthorized, response } = await authenticatedFetch(url);
+        if (unauthorized) return null;
+        if (!response.ok) return null;
+        const data = await response.json();
+        const creds = {};
+        (data.data || []).forEach((p) => {
+          if (p.registered && p.loginId) {
+            creds[p.platform] = { id: p.loginId, pw: p.loginPassword || '' };
+          }
+        });
+        return creds;
+      } catch (err) {
+        console.error('[scheduler] 계정 조회 실패:', err.message);
+        return null;
+      }
+    },
+  });
+  scheduler.start();
 
   // Auto updater
   autoUpdater.autoDownload = false;
@@ -788,6 +995,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  if (scheduler) scheduler.stop();
   if (crawler) crawler.destroy();
   stopSerialPolling();
   try {
@@ -802,6 +1010,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (scheduler) scheduler.stop();
   if (crawler) crawler.destroy();
   stopSerialPolling();
   try {
