@@ -1,5 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 class PocRunner {
   constructor(platform, callbacks = {}) {
@@ -8,6 +10,7 @@ class PocRunner {
     this.onResult = callbacks.onResult || (() => {});
     this.onError = callbacks.onError || (() => {});
     this.child = null;
+    this._tmpDir = null;
   }
 
   async run(id, pw, options = {}) {
@@ -15,7 +18,12 @@ class PocRunner {
     // Linux/Windows 대응도 필요하면 require('electron') 사용
     const scriptPath = path.join(__dirname, `poc-${this.platform}.js`);
 
+    // 세션 격리: 크롤러별 임시 user-data-dir 사용
+    this._tmpDir = path.join(os.tmpdir(), `poc-${this.platform}-${Date.now()}`);
+    fs.mkdirSync(this._tmpDir, { recursive: true });
+
     const args = [
+      `--user-data-dir=${this._tmpDir}`,
       scriptPath,
       `--id=${id}`,
       `--pw=${pw}`,
@@ -67,14 +75,23 @@ class PocRunner {
       });
 
       this.child.on('exit', (code) => {
+        this._cleanup();
         if (code === 0) resolve(resultData);
         else reject(new Error(`${this.platform} POC 종료 (code ${code})`));
       });
     });
   }
 
+  _cleanup() {
+    if (this._tmpDir) {
+      try { fs.rmSync(this._tmpDir, { recursive: true, force: true }); } catch {}
+      this._tmpDir = null;
+    }
+  }
+
   destroy() {
     if (this.child && !this.child.killed) this.child.kill();
+    this._cleanup();
   }
 }
 
