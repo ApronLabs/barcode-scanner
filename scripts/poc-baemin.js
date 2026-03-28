@@ -191,21 +191,33 @@ function getAutoLoginScript(id, pw) {
       if (t !== 'submit' && t !== 'button' && t !== 'file' && !idInput) idInput = inp;
     });
     if (!idInput || !pwInput) return { success: false, error: 'input not found (' + inputs.length + ')' };
-    function setVal(el, val) {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, val);
-      el.dispatchEvent(new Event('input',{bubbles:true}));
-      el.dispatchEvent(new Event('change',{bubbles:true}));
+    function typeInto(el, val) {
+      el.focus();
+      el.value = '';
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+      nativeSetter.call(el, '');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, val);
+      if (el.value !== val) {
+        nativeSetter.call(el, val);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
     }
-    idInput.focus(); setVal(idInput, ${JSON.stringify(id)});
-    pwInput.focus(); setVal(pwInput, ${JSON.stringify(pw)});
+    typeInto(idInput, ${JSON.stringify(id)});
+    await new Promise(r => setTimeout(r, 300));
+    typeInto(pwInput, ${JSON.stringify(pw)});
     await new Promise(r => setTimeout(r, 500));
-    const btns = document.querySelectorAll('button, input[type="submit"], a');
+    const btns = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
     for (const btn of btns) {
       const t = (btn.textContent||'').trim();
-      if (t.includes('로그인') || t.includes('Login') || t.includes('Sign')) { btn.click(); return { success: true }; }
+      if (t.includes('로그인') || t.includes('Login') || t.includes('Sign') || t.includes('LOG IN')) { btn.click(); return { success: true }; }
     }
     const sub = document.querySelector('button[type="submit"]');
     if (sub) { sub.click(); return { success: true }; }
+    const forms = document.querySelectorAll('form');
+    if (forms.length > 0) { forms[0].submit(); return { success: true, method: 'form.submit' }; }
     return { success: false, error: 'button not found' };
   })()`;
 }

@@ -183,20 +183,23 @@ function getAutoLoginScript(id, pw) {
       if (t !== 'submit' && t !== 'button' && t !== 'file' && !idInput) idInput = inp;
     });
     if (!idInput || !pwInput) return { success: false, error: 'input not found (' + inputs.length + ')' };
-    function setVal(el, val) {
+    function typeInto(el, val) {
       el.focus();
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, '');
+      el.value = '';
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
+      setter.call(el, '');
       el.dispatchEvent(new Event('input', {bubbles:true}));
-      for (let i = 0; i < val.length; i++) {
-        const cur = el.value + val[i];
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, cur);
-        el.dispatchEvent(new Event('input', {bubbles:true}));
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, val);
+      if (el.value !== val) {
+        setter.call(el, val);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
+        el.dispatchEvent(new Event('change', {bubbles:true}));
       }
-      el.dispatchEvent(new Event('change', {bubbles:true}));
     }
-    setVal(idInput, ${JSON.stringify(id)});
+    typeInto(idInput, ${JSON.stringify(id)});
     await new Promise(r => setTimeout(r, 300));
-    setVal(pwInput, ${JSON.stringify(pw)});
+    typeInto(pwInput, ${JSON.stringify(pw)});
     await new Promise(r => setTimeout(r, 500));
     const btns = document.querySelectorAll('button, input[type="submit"], a');
     for (const btn of btns) {

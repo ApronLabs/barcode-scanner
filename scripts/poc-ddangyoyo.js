@@ -285,18 +285,24 @@ app.whenReady().then(async () => {
         const pwInput = document.getElementById('mf_sct_pwd');
         if (!idInput || !pwInput) return { success: false, error: 'form not found' };
 
-        function setVal(el, val) {
+        function typeInto(el, val) {
           el.focus();
           el.value = '';
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-          if (setter) setter.call(el, val);
-          else el.value = val;
+          if (setter) setter.call(el, '');
           el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, val);
+          if (el.value !== val) {
+            if (setter) setter.call(el, val);
+            else el.value = val;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
         }
-        setVal(idInput, ${idEscaped});
+        typeInto(idInput, ${idEscaped});
         await sleep(300);
-        setVal(pwInput, ${pwEscaped});
+        typeInto(pwInput, ${pwEscaped});
         await sleep(500);
 
         const loginBtn = document.getElementById('mf_btn_webLogin');

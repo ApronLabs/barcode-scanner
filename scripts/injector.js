@@ -140,17 +140,24 @@ function getAutoLoginScript(loginId, loginPw) {
         return { success: false, error: 'ID/PW 입력란 없음 (input ' + inputs.length + '개)' };
       }
 
-      function setVal(el, val) {
+      function typeInto(el, val) {
+        el.focus();
+        el.value = '';
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        setter.call(el, val);
+        setter.call(el, '');
         el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, val);
+        if (el.value !== val) {
+          setter.call(el, val);
+          el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
       }
 
-      idInput.focus();
-      setVal(idInput, ${idEscaped});
-      pwInput.focus();
-      setVal(pwInput, ${pwEscaped});
+      typeInto(idInput, ${idEscaped});
+      await new Promise(r => setTimeout(r, 300));
+      typeInto(pwInput, ${pwEscaped});
 
       await new Promise(r => setTimeout(r, 500));
 
