@@ -10,7 +10,11 @@
 const __pocArg = process.argv.find(a => a.startsWith('--poc-script='));
 if (__pocArg) {
   const name = __pocArg.split('=')[1];
-  if (/^[a-z]+$/.test(name)) require(`./scripts/poc-${name}.js`);
+  if (/^[a-z]+$/.test(name)) {
+    // asarUnpack된 스크립트를 절대 경로로 로드
+    const scriptPath = require('path').join(process.resourcesPath, 'app.asar.unpacked', 'scripts', `poc-${name}.js`);
+    require(scriptPath);
+  }
   return;
 }
 
