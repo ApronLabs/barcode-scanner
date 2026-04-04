@@ -14,8 +14,7 @@ class PocRunner {
   }
 
   async run(id, pw, options = {}) {
-    const electronPath = path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron');
-    // Linux/Windows 대응도 필요하면 require('electron') 사용
+    const electronPath = this._getElectronPath();
     const scriptPath = path.join(__dirname, `poc-${this.platform}.js`);
 
     // 세션 격리: 크롤러별 임시 user-data-dir 사용
@@ -92,6 +91,20 @@ class PocRunner {
   destroy() {
     if (this.child && !this.child.killed) this.child.kill();
     this._cleanup();
+  }
+
+  _getElectronPath() {
+    const baseDist = path.join(__dirname, '..', 'node_modules', 'electron', 'dist');
+    switch (process.platform) {
+      case 'darwin':
+        return path.join(baseDist, 'Electron.app', 'Contents', 'MacOS', 'Electron');
+      case 'win32':
+        return path.join(baseDist, 'electron.exe');
+      case 'linux':
+        return path.join(baseDist, 'electron');
+      default:
+        return path.join(baseDist, 'electron');
+    }
   }
 }
 
