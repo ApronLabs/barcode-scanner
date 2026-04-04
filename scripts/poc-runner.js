@@ -3,6 +3,13 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
+// 디버깅용 로그 파일 (앱 실행 디렉토리에 poc-runner.log)
+const LOG_FILE = path.join(os.homedir(), 'poc-runner.log');
+function log(msg) {
+  const ts = new Date().toISOString();
+  try { fs.appendFileSync(LOG_FILE, `[${ts}] ${msg}\n`); } catch {}
+}
+
 class PocRunner {
   constructor(platform, callbacks = {}) {
     this.platform = platform;
@@ -44,10 +51,18 @@ class PocRunner {
       args.push(`--sessionToken=${options.salesKeeper.sessionToken}`);
     }
 
+    log(`spawn: ${electronPath}`);
+    log(`args: ${JSON.stringify(args)}`);
+    log(`isPackaged: ${isPackaged}`);
+
     return new Promise((resolve, reject) => {
       this.child = spawn(electronPath, args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
+      });
+
+      this.child.on('error', (err) => {
+        log(`spawn error: ${err.message}`);
       });
 
       let resultData = null;
@@ -79,10 +94,11 @@ class PocRunner {
       });
 
       this.child.stderr.on('data', (data) => {
-        // stderr는 디버깅 로그 — 필요시 console.log
+        log(`[${this.platform}:stderr] ${data.toString().trim()}`);
       });
 
       this.child.on('exit', (code) => {
+        log(`[${this.platform}] exit code: ${code}`);
         this._cleanup();
         if (code === 0) resolve(resultData);
         else reject(new Error(`${this.platform} POC 종료 (code ${code})`));

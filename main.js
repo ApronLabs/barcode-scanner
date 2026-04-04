@@ -910,6 +910,11 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'login.html'));
 
+  // F12로 개발자도구 토글
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.key === 'F12') mainWindow.webContents.toggleDevTools();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
