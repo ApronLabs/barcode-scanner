@@ -14,7 +14,8 @@ class PocRunner {
   }
 
   async run(id, pw, options = {}) {
-    const electronPath = this._getElectronPath();
+    const isPackaged = __dirname.includes('app.asar');
+    const electronPath = isPackaged ? process.execPath : this._getElectronPath();
     const scriptPath = path.join(__dirname, `poc-${this.platform}.js`);
 
     // 세션 격리: 크롤러별 임시 user-data-dir 사용
@@ -23,11 +24,19 @@ class PocRunner {
 
     const args = [
       `--user-data-dir=${this._tmpDir}`,
-      scriptPath,
+    ];
+    // 패키징 모드: exe가 --poc-script 플래그로 poc 스크립트 라우팅
+    // 개발 모드: electron에 스크립트 경로 직접 전달
+    if (isPackaged) {
+      args.push(`--poc-script=${this.platform}`);
+    } else {
+      args.push(scriptPath);
+    }
+    args.push(
       `--id=${id}`,
       `--pw=${pw}`,
       `--mode=${options.mode || 'daily'}`,
-    ];
+    );
     if (options.targetDate) args.push(`--targetDate=${options.targetDate}`);
     if (options.salesKeeper) {
       args.push(`--storeId=${options.salesKeeper.salesKeeperStoreId}`);

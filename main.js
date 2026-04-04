@@ -6,6 +6,14 @@
  * 매출 크롤러 (배민/요기요/쿠팡이츠) 통합
  */
 
+// 패키징된 앱에서 PocRunner가 --poc-script 플래그로 재실행할 때 poc 스크립트만 로드
+const __pocArg = process.argv.find(a => a.startsWith('--poc-script='));
+if (__pocArg) {
+  const name = __pocArg.split('=')[1];
+  if (/^[a-z]+$/.test(name)) require(`./scripts/poc-${name}.js`);
+  return;
+}
+
 // sudo-prompt의 Node.util.isObject 호환 이슈 (node-global-key-listener 권한 설정)
 process.on('unhandledRejection', (reason) => {
   const msg = String(reason);
