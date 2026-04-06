@@ -1,6 +1,6 @@
 // 자동 크롤링 스케줄러
-// - 매일 KST 11시에 어제 날짜 데이터 자동 수집
-// - DB에 이미 수집된 데이터는 스킵
+// - 1시간 단위로 전날 데이터 수집 시도 (성공한 플랫폼은 스킵)
+// - DB에 이미 수집된 데이터는 스킵 (sync-status API 기반)
 // - 첫 사용 시 2개월 백필
 'use strict';
 
@@ -27,7 +27,7 @@ class AutoCrawlScheduler {
 
   start() {
     if (this._interval) return;
-    console.log('[scheduler] 자동 크롤링 스케줄러 시작 (매일 KST 11시 실행)');
+    console.log('[scheduler] 자동 크롤링 스케줄러 시작 (1시간 단위 시도)');
     this._interval = setInterval(() => this._checkAndRun(), 60_000);
   }
 
@@ -41,26 +41,33 @@ class AutoCrawlScheduler {
 
   getStatus() {
     const lastRunDate = this.store.get('schedulerLastRunDate') || null;
+    const lastAttemptSlot = this.store.get('schedulerLastAttemptSlot') || null;
     return {
       enabled: !!this._interval,
       lastRunDate,
+      lastAttemptSlot,
       isBackfilling: this._backfilling,
       backfillProgress: this._backfillProgress,
       isCrawling: this._crawling,
     };
   }
 
-  // ─── 매분 체크: KST 11시이면 백필+일일 수집 실행 ───
+  // ─── 매분 체크: 1시간 단위로 백필+일일 수집 시도 ───
+  // 매 정시마다 sync-status 확인 후 미수집 플랫폼만 크롤링
+  // POS 컴퓨터가 언제 켜져도 1시간 내 전날 데이터 수집
   async _checkAndRun() {
     const now = new Date();
-    const kstHour = new Date(now.getTime() + 9 * 60 * 60 * 1000).getUTCHours();
-    if (kstHour !== 11) return;
-
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const kstHour = kst.getUTCHours();
     const todayStr = this._getKstToday();
-    const lastRunDate = this.store.get('schedulerLastRunDate');
-    if (lastRunDate === todayStr) return; // 오늘 이미 실행됨
 
-    console.log('[scheduler] 11시 도달 — 백필+일일 크롤링 시작');
+    // 1시간에 한 번만 시도 (YYYY-MM-DD-HH 단위)
+    const currentSlot = `${todayStr}-${String(kstHour).padStart(2, '0')}`;
+    const lastAttemptSlot = this.store.get('schedulerLastAttemptSlot');
+    if (lastAttemptSlot === currentSlot) return;
+
+    this.store.set('schedulerLastAttemptSlot', currentSlot);
+    console.log(`[scheduler] 매시 체크 (KST ${currentSlot}) — 백필+일일 크롤링 시도`);
     await this.runBackfillAndDaily({ source: 'auto' });
   }
 
