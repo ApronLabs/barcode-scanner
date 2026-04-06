@@ -754,7 +754,7 @@ function updateSchedulerUI(status) {
 
   if (status.enabled) {
     dot.classList.add('active');
-    let text = '<strong>매일 오전 11시</strong> 자동 수집 활성';
+    let text = '<strong>1시간 단위</strong> 자동 수집 활성';
     if (status.lastRunDate) {
       text += ` | 마지막 수집: ${status.lastRunDate}`;
     }
