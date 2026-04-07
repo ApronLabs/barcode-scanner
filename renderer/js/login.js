@@ -4,6 +4,11 @@ const loginBtn = document.getElementById('loginBtn');
 const errorMsg = document.getElementById('errorMsg');
 const rememberCheck = document.getElementById('rememberCheck');
 
+// 앱 버전 표시
+api.getAppVersion().then(v => {
+  document.getElementById('appVersion').textContent = `v${v}`;
+}).catch(() => {});
+
 function showError(msg) {
   errorMsg.textContent = msg;
   errorMsg.classList.add('visible');

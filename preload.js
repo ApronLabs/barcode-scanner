@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('api', {
   onBarcodeScanned: (callback) => ipcRenderer.on('barcode-scanned', (_, barcode) => callback(barcode)),
   onSerialStatus: (callback) => ipcRenderer.on('serial-status', (_, status) => callback(status)),
   onSessionExpired: (callback) => ipcRenderer.on('session-expired', () => callback()),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getSavedLogin: () => ipcRenderer.invoke('get-saved-login'),
   saveLogin: (email, password) => ipcRenderer.invoke('save-login', { email, password }),
   clearSavedLogin: () => ipcRenderer.invoke('clear-saved-login'),

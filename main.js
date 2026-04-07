@@ -497,6 +497,9 @@ ipcMain.on('navigate', (event, page) => {
 });
 
 // IPC: 설정 저장/조회
+// IPC: 앱 버전
+ipcMain.handle('get-app-version', () => app.getVersion());
+
 // IPC: 로그인 정보 저장/불러오기 (30일 만료)
 const SAVED_LOGIN_TTL = 30 * 24 * 60 * 60 * 1000; // 30일
 
