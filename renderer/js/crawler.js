@@ -1,6 +1,6 @@
-const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
-const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
-const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요', okpos: 'OKPOS' };
+const ALL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos', 'sikbom'];
+const CRAWL_SITES = ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos', 'sikbom'];
+const SITE_NAMES = { baemin: '배민', yogiyo: '요기요', coupangeats: '쿠팡이츠', ddangyoyo: '땡겨요', okpos: 'OKPOS', sikbom: '식봄' };
 const PAGE_NAMES = {
   orderHistory: '주문내역', orders: '주문내역', settlement: '정산',
   billing: '정산', sales: '매출', generic: '전체', default: '주문내역',

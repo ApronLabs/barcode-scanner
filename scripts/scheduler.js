@@ -143,7 +143,7 @@ class AutoCrawlScheduler {
       console.error('[scheduler] sync-status 실패:', err.message, '— fallback (어제만 크롤링)');
     }
 
-    const allSources = options.sites || ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
+    const allSources = options.sites || ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos', 'sikbom'];
     const availableSources = allSources.filter(src => credentials[src]?.id);
     if (availableSources.length === 0) {
       const msg = '등록된 플랫폼 계정이 없습니다';
@@ -151,6 +151,22 @@ class AutoCrawlScheduler {
       onError({ error: msg });
       return { error: msg };
     }
+
+    // 식봄은 날짜 기반 backfill/daily 개념이 없음 — 서버의 pending_scrape 목록이
+    // 유일한 소스. 날짜 로직에서 제외하고 다른 경로와 분리해 별도로 실행한다.
+    const dateBasedSources = availableSources.filter(s => s !== 'sikbom');
+    const runSikbomAtEnd = async () => {
+      if (!availableSources.includes('sikbom')) return;
+      console.log('[scheduler] 식봄 스크래퍼 실행');
+      try {
+        await this._crawlPlatformsWithCallbacks(['sikbom'], credentials, null, salesKeeperOpts, {
+          onStatus, onResult, onError,
+        });
+      } catch (err) {
+        console.error('[scheduler] 식봄 스크래퍼 오류:', err.message);
+        onError({ error: err.message });
+      }
+    };
 
     // salesKeeper 옵션 구성
     const { session } = require('electron');
@@ -181,12 +197,13 @@ class AutoCrawlScheduler {
         onStatus(`어제 데이터 크롤링 시작 (${yesterday})`);
         this._sendUpdate({ type: 'daily-start', targetDate: yesterday });
 
-        await this._crawlPlatformsWithCallbacks(availableSources, credentials, yesterday, salesKeeperOpts, {
+        await this._crawlPlatformsWithCallbacks(dateBasedSources, credentials, yesterday, salesKeeperOpts, {
           onStatus, onResult, onError,
         });
 
         this.store.set('schedulerLastRunDate', this._getKstToday());
-        this._sendUpdate({ type: 'daily-done', targetDate: yesterday, platforms: availableSources });
+        this._sendUpdate({ type: 'daily-done', targetDate: yesterday, platforms: dateBasedSources });
+        await runSikbomAtEnd();
         onComplete({ type: 'daily-done', targetDate: yesterday, platforms: availableSources });
         console.log(`[scheduler] fallback 일일 수집 완료`);
       } catch (err) {
@@ -200,7 +217,7 @@ class AutoCrawlScheduler {
     }
 
     // 6. 미수집 날짜/플랫폼 확인
-    const needBackfillSites = availableSources.filter(src => {
+    const needBackfillSites = dateBasedSources.filter(src => {
       const synced = syncedDates[src] || [];
       const dateRange = this._getDateRange(startDate60, yesterday);
       return dateRange.some(d => !synced.includes(d));
@@ -236,12 +253,13 @@ class AutoCrawlScheduler {
     if (needBackfillSites.length > 0) {
       console.log('[scheduler] 백필에서 어제 데이터 포함 수집 완료 — daily 건너뜀');
       this.store.set('schedulerLastRunDate', this._getKstToday());
+      await runSikbomAtEnd();
       onComplete({ type: 'backfill-and-daily-done', platforms: availableSources });
       console.log('[scheduler] runBackfillAndDaily 완료');
       return { success: true, mode: 'backfill' };
     }
 
-    const needDailySites = availableSources.filter(src => {
+    const needDailySites = dateBasedSources.filter(src => {
       const synced = syncedDates[src] || [];
       return !synced.includes(yesterday);
     });
@@ -271,6 +289,9 @@ class AutoCrawlScheduler {
       console.log(`[scheduler] ${yesterday} — 모든 플랫폼 이미 수집 완료`);
       this.store.set('schedulerLastRunDate', this._getKstToday());
     }
+
+    // 식봄 스크래퍼 (날짜 로직과 독립)
+    await runSikbomAtEnd();
 
     // 완료 이벤트
     const completeData = {
