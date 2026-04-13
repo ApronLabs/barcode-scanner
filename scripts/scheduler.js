@@ -23,12 +23,16 @@ class AutoCrawlScheduler {
     this._backfilling = false;
     this._backfillProgress = null;
     this._crawling = false;
+    // 식봄 전용 30분 interval (hourly 크롤링과 독립)
+    this._sikbomInterval = null;
+    this._sikbomRunning = false;
   }
 
   start() {
     if (this._interval) return;
     console.log('[scheduler] 자동 크롤링 스케줄러 시작 (1시간 단위 시도)');
     this._interval = setInterval(() => this._checkAndRun(), 60_000);
+    this.startSikbomInterval();
   }
 
   stop() {
@@ -36,7 +40,99 @@ class AutoCrawlScheduler {
       clearInterval(this._interval);
       this._interval = null;
     }
+    this.stopSikbomInterval();
     console.log('[scheduler] 스케줄러 중지');
+  }
+
+  // ─── 식봄 30분 인터벌 ───
+  // 앱이 켜져 있을 때 30분마다 식봄 스크래퍼만 실행.
+  // 서버의 pending 엔드포인트가 이미 `orderDate >= 오늘-3일` 필터를 적용하므로
+  // 각 tick에서 해당 범위의 미수집 주문만 수집하고, 수집된 주문은 status가
+  // 'ordered'로 바뀌어 다음 tick에 빠짐 → 중복 수집 없음.
+  startSikbomInterval() {
+    if (this._sikbomInterval) return;
+    const INTERVAL_MS = 30 * 60 * 1000;
+    console.log('[scheduler] 식봄 30분 interval 시작');
+    // 시작 직후 1회 즉시 실행 (앱 방금 켰을 때도 바로 긁어온다)
+    setTimeout(() => this._runSikbomOnce().catch(err => {
+      console.error('[scheduler] 식봄 초기 실행 오류:', err.message);
+    }), 5_000);
+    this._sikbomInterval = setInterval(() => {
+      this._runSikbomOnce().catch(err => {
+        console.error('[scheduler] 식봄 interval 실행 오류:', err.message);
+      });
+    }, INTERVAL_MS);
+  }
+
+  stopSikbomInterval() {
+    if (this._sikbomInterval) {
+      clearInterval(this._sikbomInterval);
+      this._sikbomInterval = null;
+      console.log('[scheduler] 식봄 interval 중지');
+    }
+  }
+
+  async _runSikbomOnce() {
+    if (this._sikbomRunning) {
+      console.log('[scheduler] 식봄 이전 실행 진행 중 — 스킵');
+      return;
+    }
+    const serverUrl = this.store.get('serverUrl');
+    const storeId = this.store.get('lastStoreId');
+    if (!serverUrl || !storeId) {
+      console.log('[scheduler] 식봄 스킵: serverUrl 또는 storeId 미설정');
+      return;
+    }
+
+    let credentials;
+    try {
+      credentials = await this.getCredentials(storeId);
+    } catch (err) {
+      console.log('[scheduler] 식봄 스킵: 크레덴셜 조회 실패:', err.message);
+      return;
+    }
+    if (!credentials || !credentials.sikbom?.id) {
+      // sikbom 계정 미등록 — 조용히 스킵
+      return;
+    }
+
+    // 세션 토큰
+    const { session } = require('electron');
+    const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
+    const token = cookies.length > 0 ? cookies[0].value : '';
+    if (!token) {
+      console.log('[scheduler] 식봄 스킵: 세션 토큰 없음');
+      return;
+    }
+
+    const salesKeeperOpts = {
+      salesKeeper: {
+        apiBaseUrl: serverUrl,
+        salesKeeperStoreId: storeId,
+        sessionToken: token,
+      },
+    };
+
+    this._sikbomRunning = true;
+    try {
+      console.log('[scheduler] 식봄 30분 tick — 실행');
+      await this._crawlPlatformsWithCallbacks(
+        ['sikbom'],
+        credentials,
+        null,
+        salesKeeperOpts,
+        {
+          onStatus: (msg) => this._sendUpdate({ type: 'sikbom-status', ...msg }),
+          onResult: (data) => this._sendUpdate({ type: 'sikbom-result', ...data }),
+          onError: (data) => this._sendUpdate({ type: 'sikbom-error', ...data }),
+        }
+      );
+      this.store.set('sikbomLastRunAt', Date.now());
+    } catch (err) {
+      console.error('[scheduler] 식봄 실행 오류:', err.message);
+    } finally {
+      this._sikbomRunning = false;
+    }
   }
 
   getStatus() {
@@ -143,6 +239,8 @@ class AutoCrawlScheduler {
       console.error('[scheduler] sync-status 실패:', err.message, '— fallback (어제만 크롤링)');
     }
 
+    // 식봄은 날짜 기반 backfill/daily 개념이 없어 이 경로에서 제외.
+    // 대신 startSikbomInterval의 30분 interval이 별도로 돌린다.
     const allSources = options.sites || ['baemin', 'yogiyo', 'coupangeats', 'ddangyoyo', 'okpos'];
     const availableSources = allSources.filter(src => credentials[src]?.id);
     if (availableSources.length === 0) {
@@ -151,6 +249,8 @@ class AutoCrawlScheduler {
       onError({ error: msg });
       return { error: msg };
     }
+
+    const dateBasedSources = availableSources;
 
     // salesKeeper 옵션 구성
     const { session } = require('electron');
@@ -181,12 +281,12 @@ class AutoCrawlScheduler {
         onStatus(`어제 데이터 크롤링 시작 (${yesterday})`);
         this._sendUpdate({ type: 'daily-start', targetDate: yesterday });
 
-        await this._crawlPlatformsWithCallbacks(availableSources, credentials, yesterday, salesKeeperOpts, {
+        await this._crawlPlatformsWithCallbacks(dateBasedSources, credentials, yesterday, salesKeeperOpts, {
           onStatus, onResult, onError,
         });
 
         this.store.set('schedulerLastRunDate', this._getKstToday());
-        this._sendUpdate({ type: 'daily-done', targetDate: yesterday, platforms: availableSources });
+        this._sendUpdate({ type: 'daily-done', targetDate: yesterday, platforms: dateBasedSources });
         onComplete({ type: 'daily-done', targetDate: yesterday, platforms: availableSources });
         console.log(`[scheduler] fallback 일일 수집 완료`);
       } catch (err) {
@@ -200,7 +300,7 @@ class AutoCrawlScheduler {
     }
 
     // 6. 미수집 날짜/플랫폼 확인
-    const needBackfillSites = availableSources.filter(src => {
+    const needBackfillSites = dateBasedSources.filter(src => {
       const synced = syncedDates[src] || [];
       const dateRange = this._getDateRange(startDate60, yesterday);
       return dateRange.some(d => !synced.includes(d));
@@ -241,7 +341,7 @@ class AutoCrawlScheduler {
       return { success: true, mode: 'backfill' };
     }
 
-    const needDailySites = availableSources.filter(src => {
+    const needDailySites = dateBasedSources.filter(src => {
       const synced = syncedDates[src] || [];
       return !synced.includes(yesterday);
     });

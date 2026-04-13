@@ -25,8 +25,16 @@ class PocRunner {
     const electronPath = isPackaged ? process.execPath : this._getElectronPath();
     const scriptPath = path.join(__dirname, `poc-${this.platform}.js`);
 
-    // 세션 격리: 크롤러별 임시 user-data-dir 사용
-    this._tmpDir = path.join(os.tmpdir(), `poc-${this.platform}-${Date.now()}`);
+    // 세션 격리: 크롤러별 user-data-dir
+    // sikbom은 네이버 OAuth 로그인이 필요하고 매 실행마다 로그인하면 캡차/기기등록에
+    // 막히므로, 전용 stable 디렉토리를 써서 쿠키와 세션을 지속시킨다. 다른 플랫폼은
+    // 매 실행 새 임시 디렉토리로 완전 격리.
+    this._useStableDir = this.platform === 'sikbom';
+    if (this._useStableDir) {
+      this._tmpDir = path.join(os.homedir(), '.poc-sikbom-session');
+    } else {
+      this._tmpDir = path.join(os.tmpdir(), `poc-${this.platform}-${Date.now()}`);
+    }
     fs.mkdirSync(this._tmpDir, { recursive: true });
 
     const args = [
@@ -108,7 +116,10 @@ class PocRunner {
 
   _cleanup() {
     if (this._tmpDir) {
-      try { fs.rmSync(this._tmpDir, { recursive: true, force: true }); } catch {}
+      // stable 디렉토리는 삭제하지 않음 (세션 지속)
+      if (!this._useStableDir) {
+        try { fs.rmSync(this._tmpDir, { recursive: true, force: true }); } catch {}
+      }
       this._tmpDir = null;
     }
   }
