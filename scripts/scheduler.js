@@ -72,38 +72,70 @@ class AutoCrawlScheduler {
     }
   }
 
+  async _postSchedulerTrace(serverUrl, storeId, token, events) {
+    if (!serverUrl || !storeId || !token || events.length === 0) return;
+    try {
+      await fetch(
+        `${serverUrl}/api/stores/${storeId}/supplier-scrapers/sikbom/trace`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Cookie: `session-token=${token}`,
+          },
+          body: JSON.stringify({ events }),
+        }
+      );
+    } catch (err) {
+      console.log('[scheduler] trace POST 실패:', err.message);
+    }
+  }
+
   async _runSikbomOnce() {
-    const emitSkip = (reason) => {
+    const runId = `sched-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const serverUrl = this.store.get('serverUrl');
+    const storeId = this.store.get('lastStoreId');
+
+    // 세션 토큰 먼저 확보해서 이후 skip 사유도 서버로 쏠 수 있게
+    let token = '';
+    if (serverUrl) {
+      try {
+        const { session } = require('electron');
+        const cookies = await session.defaultSession.cookies.get({
+          url: serverUrl,
+          name: 'session-token',
+        });
+        token = cookies.length > 0 ? cookies[0].value : '';
+      } catch {}
+    }
+
+    const emitSkip = async (reason) => {
       console.log(`[scheduler] 식봄 스킵: ${reason}`);
       this._sendUpdate({ type: 'sikbom-skip', reason });
+      await this._postSchedulerTrace(serverUrl, storeId, token, [
+        { runId, level: 'skip', event: 'skip', message: reason },
+      ]);
     };
 
     if (this._sikbomRunning) {
-      emitSkip('이전 실행 진행 중');
+      await emitSkip('이전 실행 진행 중');
       return;
     }
-    const serverUrl = this.store.get('serverUrl');
-    const storeId = this.store.get('lastStoreId');
-    if (!serverUrl) { emitSkip('serverUrl 미설정 (로그인 필요)'); return; }
-    if (!storeId)   { emitSkip('storeId 미설정 (매장 선택 필요)'); return; }
+    if (!serverUrl) { await emitSkip('serverUrl 미설정 (로그인 필요)'); return; }
+    if (!storeId)   { await emitSkip('storeId 미설정 (매장 선택 필요)'); return; }
+    if (!token)     { await emitSkip('세션 토큰 없음 — 노심 재로그인 필요'); return; }
 
     let credentials;
     try {
       credentials = await this.getCredentials(storeId);
     } catch (err) {
-      emitSkip(`크레덴셜 조회 실패: ${err.message}`);
+      await emitSkip(`크레덴셜 조회 실패: ${err.message}`);
       return;
     }
     if (!credentials || !credentials.sikbom?.id) {
-      emitSkip('식봄 계정 미등록');
+      await emitSkip('식봄 계정 미등록');
       return;
     }
-
-    // 세션 토큰
-    const { session } = require('electron');
-    const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
-    const token = cookies.length > 0 ? cookies[0].value : '';
-    if (!token) { emitSkip('세션 토큰 없음 — 노심 재로그인 필요'); return; }
 
     const salesKeeperOpts = {
       salesKeeper: {
@@ -111,12 +143,18 @@ class AutoCrawlScheduler {
         salesKeeperStoreId: storeId,
         sessionToken: token,
       },
+      // poc-sikbom.js 내부에서 trace POST 할 때 동일 runId 사용하도록 전달
+      sikbomRunId: runId,
     };
 
     this._sikbomRunning = true;
     try {
-      console.log('[scheduler] 식봄 실행 시작');
+      console.log('[scheduler] 식봄 실행 시작 runId=', runId);
       this._sendUpdate({ type: 'sikbom-start' });
+      await this._postSchedulerTrace(serverUrl, storeId, token, [
+        { runId, level: 'info', event: 'sched-start', message: '스케줄러가 식봄 스크래퍼 시작' },
+      ]);
+
       await this._crawlPlatformsWithCallbacks(
         ['sikbom'],
         credentials,
@@ -130,10 +168,16 @@ class AutoCrawlScheduler {
       );
       this.store.set('sikbomLastRunAt', Date.now());
       this._sendUpdate({ type: 'sikbom-done' });
-      console.log('[scheduler] 식봄 실행 완료');
+      await this._postSchedulerTrace(serverUrl, storeId, token, [
+        { runId, level: 'info', event: 'sched-done', message: '스케줄러 종료' },
+      ]);
+      console.log('[scheduler] 식봄 실행 완료 runId=', runId);
     } catch (err) {
       console.error('[scheduler] 식봄 실행 오류:', err.message);
       this._sendUpdate({ type: 'sikbom-error', error: err.message });
+      await this._postSchedulerTrace(serverUrl, storeId, token, [
+        { runId, level: 'error', event: 'sched-error', message: err.message },
+      ]);
     } finally {
       this._sikbomRunning = false;
     }
