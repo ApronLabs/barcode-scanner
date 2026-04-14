@@ -321,6 +321,17 @@ class AutoCrawlScheduler {
       },
     };
 
+    // 배달 플랫폼 경로가 어떻게 끝나든(fallback/backfill/daily/all-synced) 식봄은
+    // 항상 한 번 시도하도록 보장. _runSikbomOnce 내부에 _sikbomRunning 가드가 있어
+    // 30분 interval과 중복 실행이 되어도 안전.
+    const maybeRunSikbom = async () => {
+      if (credentials.sikbom?.id) {
+        await this._runSikbomOnce().catch((err) => {
+          console.error('[scheduler] runBackfillAndDaily 식봄 오류:', err.message);
+        });
+      }
+    };
+
     // 5. sync-status 실패 시: 어제만 daily 크롤링 (fallback)
     if (syncStatusFailed) {
       console.log(`[scheduler] fallback — 어제(${yesterday}) daily 크롤링`);
@@ -344,6 +355,7 @@ class AutoCrawlScheduler {
       } finally {
         this._crawling = false;
       }
+      await maybeRunSikbom();
       return { success: true, mode: 'fallback-daily' };
     }
 
@@ -384,6 +396,7 @@ class AutoCrawlScheduler {
     if (needBackfillSites.length > 0) {
       console.log('[scheduler] 백필에서 어제 데이터 포함 수집 완료 — daily 건너뜀');
       this.store.set('schedulerLastRunDate', this._getKstToday());
+      await maybeRunSikbom();
       onComplete({ type: 'backfill-and-daily-done', platforms: availableSources });
       console.log('[scheduler] runBackfillAndDaily 완료');
       return { success: true, mode: 'backfill' };
@@ -420,13 +433,8 @@ class AutoCrawlScheduler {
       this.store.set('schedulerLastRunDate', this._getKstToday());
     }
 
-    // 수동 크롤링/시간별 자동 크롤링 끝나면 식봄도 한 번 시도한다.
-    // 30분 interval과 중복 실행은 _runSikbomOnce 내부의 _sikbomRunning 플래그로 방지.
-    if (credentials.sikbom?.id) {
-      await this._runSikbomOnce().catch((err) => {
-        console.error('[scheduler] runBackfillAndDaily 식봄 오류:', err.message);
-      });
-    }
+    // 배달 플랫폼 경로가 끝났으니 식봄도 한 번 시도
+    await maybeRunSikbom();
 
     // 완료 이벤트
     const completeData = {
