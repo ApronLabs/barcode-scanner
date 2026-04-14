@@ -73,26 +73,29 @@ class AutoCrawlScheduler {
   }
 
   async _runSikbomOnce() {
+    const emitSkip = (reason) => {
+      console.log(`[scheduler] 식봄 스킵: ${reason}`);
+      this._sendUpdate({ type: 'sikbom-skip', reason });
+    };
+
     if (this._sikbomRunning) {
-      console.log('[scheduler] 식봄 이전 실행 진행 중 — 스킵');
+      emitSkip('이전 실행 진행 중');
       return;
     }
     const serverUrl = this.store.get('serverUrl');
     const storeId = this.store.get('lastStoreId');
-    if (!serverUrl || !storeId) {
-      console.log('[scheduler] 식봄 스킵: serverUrl 또는 storeId 미설정');
-      return;
-    }
+    if (!serverUrl) { emitSkip('serverUrl 미설정 (로그인 필요)'); return; }
+    if (!storeId)   { emitSkip('storeId 미설정 (매장 선택 필요)'); return; }
 
     let credentials;
     try {
       credentials = await this.getCredentials(storeId);
     } catch (err) {
-      console.log('[scheduler] 식봄 스킵: 크레덴셜 조회 실패:', err.message);
+      emitSkip(`크레덴셜 조회 실패: ${err.message}`);
       return;
     }
     if (!credentials || !credentials.sikbom?.id) {
-      // sikbom 계정 미등록 — 조용히 스킵
+      emitSkip('식봄 계정 미등록');
       return;
     }
 
@@ -100,10 +103,7 @@ class AutoCrawlScheduler {
     const { session } = require('electron');
     const cookies = await session.defaultSession.cookies.get({ url: serverUrl, name: 'session-token' });
     const token = cookies.length > 0 ? cookies[0].value : '';
-    if (!token) {
-      console.log('[scheduler] 식봄 스킵: 세션 토큰 없음');
-      return;
-    }
+    if (!token) { emitSkip('세션 토큰 없음 — 노심 재로그인 필요'); return; }
 
     const salesKeeperOpts = {
       salesKeeper: {
@@ -115,7 +115,8 @@ class AutoCrawlScheduler {
 
     this._sikbomRunning = true;
     try {
-      console.log('[scheduler] 식봄 30분 tick — 실행');
+      console.log('[scheduler] 식봄 실행 시작');
+      this._sendUpdate({ type: 'sikbom-start' });
       await this._crawlPlatformsWithCallbacks(
         ['sikbom'],
         credentials,
@@ -128,8 +129,11 @@ class AutoCrawlScheduler {
         }
       );
       this.store.set('sikbomLastRunAt', Date.now());
+      this._sendUpdate({ type: 'sikbom-done' });
+      console.log('[scheduler] 식봄 실행 완료');
     } catch (err) {
       console.error('[scheduler] 식봄 실행 오류:', err.message);
+      this._sendUpdate({ type: 'sikbom-error', error: err.message });
     } finally {
       this._sikbomRunning = false;
     }
@@ -370,6 +374,14 @@ class AutoCrawlScheduler {
     } else {
       console.log(`[scheduler] ${yesterday} — 모든 플랫폼 이미 수집 완료`);
       this.store.set('schedulerLastRunDate', this._getKstToday());
+    }
+
+    // 수동 크롤링/시간별 자동 크롤링 끝나면 식봄도 한 번 시도한다.
+    // 30분 interval과 중복 실행은 _runSikbomOnce 내부의 _sikbomRunning 플래그로 방지.
+    if (credentials.sikbom?.id) {
+      await this._runSikbomOnce().catch((err) => {
+        console.error('[scheduler] runBackfillAndDaily 식봄 오류:', err.message);
+      });
     }
 
     // 완료 이벤트
