@@ -58,6 +58,10 @@ class PocRunner {
       args.push(`--serverUrl=${options.salesKeeper.apiBaseUrl}`);
       args.push(`--sessionToken=${options.salesKeeper.sessionToken}`);
     }
+    // sikbom: 스케줄러가 생성한 runId를 전달해서 trace 연속성 확보
+    if (options.sikbomRunId) {
+      args.push(`--runId=${options.sikbomRunId}`);
+    }
 
     log(`spawn: ${electronPath}`);
     log(`args: ${JSON.stringify(args)}`);

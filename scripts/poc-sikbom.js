@@ -37,6 +37,8 @@ const config = {
   storeId: getArg('storeId'),
   serverUrl: getArg('serverUrl'),
   sessionToken: getArg('sessionToken'),
+  // 스케줄러가 생성해 전달하는 runId. 없으면 자체 생성.
+  runId: getArg('runId') || `poc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 };
 
 const LOG_FILE = path.join(__dirname, 'poc-sikbom-log.txt');
@@ -56,8 +58,37 @@ process.on('uncaughtException', (err) => {
   if (err.code === 'EPIPE') return;
   fs.appendFileSync(LOG_FILE, `[FATAL] ${err.message}\n`);
   emit('error', { error: err.message });
+  postTrace('error', 'uncaught', err.message).catch(() => {});
 });
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── 서버 trace 전송 ──
+// 실행 단계마다 POST해서 리드 개발자가 서버에서 실행 상황을 볼 수 있게 한다.
+async function postTrace(level, event, message, payload) {
+  if (!config.serverUrl || !config.storeId || !config.sessionToken) return;
+  try {
+    const body = {
+      runId: config.runId,
+      level,
+      event,
+      message: message || null,
+      payload: payload || null,
+    };
+    await fetch(
+      `${config.serverUrl}/api/stores/${config.storeId}/supplier-scrapers/sikbom/trace`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `session-token=${config.sessionToken}`,
+        },
+        body: JSON.stringify(body),
+      }
+    );
+  } catch (err) {
+    log(`trace POST 실패 (${event}): ${err.message}`);
+  }
+}
 
 // ── 네이버 자동 로그인 스크립트 ──
 // 네이버 로그인 페이지 https://nid.naver.com/nidlogin.login
@@ -309,11 +340,16 @@ async function scrapeOrderDetail(detailUrl) {
 // ── 로그인 수행 ──
 async function performLogin() {
   const currentUrl = webView.webContents.getURL();
-  if (!isNaverLoginUrl(currentUrl)) return true;
+  if (!isNaverLoginUrl(currentUrl)) {
+    await postTrace('info', 'login-skip', '이미 로그인 상태 (세션 유효)', { url: currentUrl.slice(0, 200) });
+    return true;
+  }
 
   log(`   네이버 로그인 페이지 감지: ${currentUrl.slice(0, 80)}`);
+  await postTrace('info', 'login-auto-submit', '자동 로그인 스크립트 주입', { url: currentUrl.slice(0, 200) });
   const loginResult = await webView.webContents.executeJavaScript(getNaverLoginScript(config.id, config.pw));
   log(`   auto login: ${JSON.stringify(loginResult)}`);
+  await postTrace('info', 'login-submitted', `결과: ${JSON.stringify(loginResult)}`);
   await waitForNaverRedirect(20000);
   await sleep(2000);
 
@@ -321,6 +357,7 @@ async function performLogin() {
   log(`   block check: ${JSON.stringify(block)}`);
   if (block.captcha || block.deviceRegister || block.otp) {
     log('   캡차/기기등록/OTP 감지 → 수동 개입 대기 (최대 120초)');
+    await postTrace('warn', 'login-block', `수동 개입 필요: ${JSON.stringify(block)}`, block);
     mainWindow.show();
     emit('status', { msg: '네이버에서 추가 확인이 필요합니다. 창에서 처리해주세요.' });
     await waitForNaverRedirect(120000);
@@ -329,6 +366,9 @@ async function performLogin() {
 
   const stillOnLogin = isNaverLoginUrl(webView.webContents.getURL());
   if (stillOnLogin) {
+    await postTrace('error', 'login-failed', '로그인 페이지에서 벗어나지 못함', {
+      url: webView.webContents.getURL().slice(0, 200),
+    });
     throw new Error('네이버 로그인 실패');
   }
   return true;
@@ -344,7 +384,8 @@ app.whenReady().then(async () => {
   }
 
   emit('status', { msg: '식봄 스크래퍼 시작 — pending 목록 조회' });
-  log('=== 식봄 워커 시작 ===');
+  log(`=== 식봄 워커 시작 runId=${config.runId} ===`);
+  await postTrace('info', 'start', 'poc-sikbom.js 시작', { runId: config.runId });
 
   let pending;
   try {
@@ -352,14 +393,21 @@ app.whenReady().then(async () => {
   } catch (err) {
     emit('error', { error: `pending API 실패: ${err.message}` });
     log(`[FATAL] pending API: ${err.message}`);
+    await postTrace('error', 'pending-fetch-failed', err.message);
     setTimeout(() => app.quit(), 2000);
     return;
   }
 
   log(`   pending count: ${pending.length}`);
+  await postTrace('info', 'pending-fetched', `${pending.length}건`, {
+    count: pending.length,
+    orderNumbers: pending.slice(0, 10).map(p => p.orderNumber),
+  });
+
   if (pending.length === 0) {
     emit('status', { msg: '수집할 식봄 주문이 없습니다.' });
     emit('done', { site: 'sikbom', processed: 0 });
+    await postTrace('info', 'done', '처리할 주문 없음 — 조기 종료', { processed: 0 });
     setTimeout(() => app.quit(), 2000);
     return;
   }
@@ -388,11 +436,14 @@ app.whenReady().then(async () => {
     // 1) 첫 주문으로 이동 → 네이버 로그인 유도 (세션 지속 시 바로 통과)
     const first = batch[0];
     log(`1) 초기 navigate: ${first.detailUrl}`);
+    await postTrace('info', 'nav-initial', `첫 detailUrl로 이동`, { url: first.detailUrl });
     await navigateAndWait(first.detailUrl);
     await sleep(2500);
 
+    await postTrace('info', 'login-start', `현재 URL: ${webView.webContents.getURL().slice(0, 200)}`);
     await performLogin();
     log('2) 로그인 상태 확인 완료');
+    await postTrace('info', 'login-done', '로그인 통과');
 
     // 2) pending 순회
     for (let i = 0; i < batch.length; i++) {
@@ -404,9 +455,20 @@ app.whenReady().then(async () => {
 
       try {
         const parsed = await scrapeOrderDetail(order.detailUrl);
+        await postTrace('info', 'parse', `${order.orderNumber} 파싱`, {
+          orderNumber: order.orderNumber,
+          parsedOrderNumber: parsed.orderNumber,
+          itemsCount: parsed.items?.length || 0,
+          delivery: parsed.delivery,
+          urlAfter: webView.webContents.getURL().slice(0, 200),
+        });
         if (!parsed.items || parsed.items.length === 0) {
           log(`   ⚠ items 0건 — 셀렉터 불일치 가능성. 스킵`);
           errors.push(`${order.orderNumber}: items 0건`);
+          await postTrace('warn', 'parse-empty', `items 0건 — DOM 셀렉터 조정 필요`, {
+            orderNumber: order.orderNumber,
+            url: webView.webContents.getURL().slice(0, 200),
+          });
           failCount++;
           await sleep(SLEEP_BETWEEN_ORDERS_MS);
           continue;
@@ -435,14 +497,27 @@ app.whenReady().then(async () => {
             itemsCount: parsed.items.length,
             totalAmount: itemsSubtotal,
           });
+          await postTrace('info', 'post-ok', `${order.orderNumber} 저장 성공`, {
+            orderNumber: order.orderNumber,
+            itemsCount: parsed.items.length,
+            totalAmount: itemsSubtotal,
+          });
         } else {
           failCount++;
           errors.push(`${order.orderNumber}: POST ${result.status}`);
+          await postTrace('error', 'post-failed', `${order.orderNumber} POST ${result.status}`, {
+            orderNumber: order.orderNumber,
+            status: result.status,
+            body: (result.body || '').slice(0, 500),
+          });
         }
       } catch (err) {
         log(`   ✗ ${err.message}`);
         failCount++;
         errors.push(`${order.orderNumber}: ${err.message}`);
+        await postTrace('error', 'order-error', err.message, {
+          orderNumber: order.orderNumber,
+        });
       }
 
       if (i < batch.length - 1) {
@@ -458,9 +533,16 @@ app.whenReady().then(async () => {
       fail: failCount,
       errors: errors.slice(0, 10),
     });
+    await postTrace('info', 'done', `완료 success=${successCount} fail=${failCount}`, {
+      processed: batch.length,
+      success: successCount,
+      fail: failCount,
+      errors: errors.slice(0, 10),
+    });
   } catch (err) {
     log(`[FATAL] ${err.message}`);
     emit('error', { error: err.message });
+    await postTrace('error', 'fatal', err.message);
   } finally {
     setTimeout(() => app.quit(), 5000);
   }
