@@ -264,16 +264,15 @@ class AutoCrawlScheduler {
     }
 
     const yesterday = this._getKstYesterday();
-    // 전전달 1일 계산 (예: 3/14 → 1/1)
+    // v3.5.4: 백필 시작일을 올해 1월 1일로 확장 (이전: 전전달 1일)
     const yParts = yesterday.split('-').map(Number);
-    const startDateObj = new Date(yParts[0], yParts[1] - 1 - 2, 1); // 전전달 1일
-    const startDate60 = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-01`;
+    const backfillStart = `${yParts[0]}-01-01`;
 
-    // 4. sync-status 확인 (전전달 1일 ~ 어제)
+    // 4. sync-status 확인 (1월 1일 ~ 어제)
     let syncedDates = null;
     let syncStatusFailed = false;
     try {
-      syncedDates = await this._checkSyncStatus(storeId, startDate60, yesterday);
+      syncedDates = await this._checkSyncStatus(storeId, backfillStart, yesterday);
       // syncedDates가 null이면 API 자체 실패 (401, 네트워크 에러 등)
       if (syncedDates === null) {
         syncStatusFailed = true;
@@ -362,7 +361,7 @@ class AutoCrawlScheduler {
     // 6. 미수집 날짜/플랫폼 확인
     const needBackfillSites = dateBasedSources.filter(src => {
       const synced = syncedDates[src] || [];
-      const dateRange = this._getDateRange(startDate60, yesterday);
+      const dateRange = this._getDateRange(backfillStart, yesterday);
       return dateRange.some(d => !synced.includes(d));
     });
 
@@ -389,7 +388,7 @@ class AutoCrawlScheduler {
         this._backfilling = false;
       }
     } else {
-      console.log('[scheduler] 백필 불필요 — 모든 플랫폼 60일 데이터 수집 완료');
+      console.log('[scheduler] 백필 불필요 — 모든 플랫폼 1월 1일부터 전 기간 수집 완료');
     }
 
     // 8. 어제 데이터 daily 크롤링 — 백필이 실행됐으면 어제 데이터도 포함되어 있으므로 건너뜀

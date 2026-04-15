@@ -50,12 +50,12 @@ function formatDate(d) {
   return `${y}-${m}-${dd}`;
 }
 
-// ── 2달 전 날짜 계산 (D-1 기준) ──
-function getTwoMonthsAgo() {
+// ── 백필 시작일 — 올해 1월 1일 ──
+// v3.5.4부터 매장이 보유한 전체 기간(최대 1월 1일~)에 대해 백필을 돌려
+// 노심 백필 스크립트가 raw_data 기반 재해석을 할 수 있게 한다.
+function getBackfillStart() {
   const now = new Date();
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  const twoMonthsAgo = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1);
-  return formatDate(twoMonthsAgo);
+  return formatDate(new Date(now.getFullYear(), 0, 1));
 }
 function getYesterday() {
   const now = new Date();
@@ -69,8 +69,8 @@ function getDateRangeByMode() {
     if (!config.targetDate) throw new Error('daily 모드에서는 --targetDate=YYYY-MM-DD 필요');
     return { startDate: config.targetDate, endDate: config.targetDate };
   }
-  // backfill: 전전달 1일 ~ D-1
-  return { startDate: getTwoMonthsAgo(), endDate: getYesterday() };
+  // backfill: 1월 1일 ~ D-1 (v3.5.4부터 전 기간 백필)
+  return { startDate: getBackfillStart(), endDate: getYesterday() };
 }
 
 // ── 매출지킴이 API 전송 ──
@@ -100,6 +100,8 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     meetPayment: o.meetAmount || 0,
     settlementAmount: o.depositDueAmount || 0,
     settlementDate: o.depositDueDate || null,
+    // v3.5.4: 원본 API item 전달 (노심 route raw_data에 저장됨)
+    rawItem: o.rawItem || null,
   }));
 
   const body = JSON.stringify({
@@ -293,6 +295,9 @@ function fetchViaWebview(apiUrl) {
 }
 
 // ── 데이터 매핑 함수 ──
+// v3.5.4: 원본 API 응답(item)을 rawItem으로 보존한다.
+// 노심 route(baemin/route.ts)의 raw_data에 저장되어, 노심 백필 스크립트가
+// remapBaemin에서 광고비/배민분담 등 분리된 필드를 재추출할 수 있게 한다.
 function mapOrder(item) {
   const o = item.order, s = item.settle;
   const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount || 0;
@@ -314,6 +319,8 @@ function mapOrder(item) {
     meetAmount: s?.meetAmount || 0,
     depositDueAmount: s?.depositDueAmount || 0,
     depositDueDate: s?.depositDueDate || '',
+    // ★ v3.5.4: 원본 보존 — 배민 2차 백필에서 광고비/배민분담 분리 근거
+    rawItem: item,
   };
 }
 

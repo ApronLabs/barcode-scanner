@@ -57,11 +57,11 @@ function getDateRangeByMode() {
       endDateCompact: compact,
     };
   }
-  // backfill — 전전달 1일부터 D-1까지
+  // backfill — 올해 1월 1일부터 D-1까지 (v3.5.4부터 전 기간 백필)
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const end = yesterday;
-  const start = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1); // 전전달 1일
+  const start = new Date(yesterday.getFullYear(), 0, 1);
   const fmt = (d) => d.toISOString().split('T')[0];
   const fmtCompact = (d) => fmt(d).replace(/-/g, '');
   return {
