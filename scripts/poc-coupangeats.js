@@ -57,11 +57,11 @@ function getDateRangeByMode() {
       endMs: dateToKstEndMs(config.targetDate),
     };
   }
-  // backfill — 전전달 1일부터 D-1까지
+  // backfill — 올해 1월 1일부터 D-1까지 (v3.5.4부터 전 기간 백필)
   const kstNow = new Date(Date.now() + 9 * 3600000);
   const yesterday = new Date(kstNow);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const start = new Date(Date.UTC(yesterday.getUTCFullYear(), yesterday.getUTCMonth() - 2, 1)); // 전전달 1일
+  const start = new Date(Date.UTC(kstNow.getUTCFullYear(), 0, 1));
   const f = d => `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
   const startDash = f(start);
   const endDash = f(yesterday);

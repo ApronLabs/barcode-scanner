@@ -51,13 +51,13 @@ function getDateRangeByMode() {
     if (!config.targetDate) throw new Error('daily 모드에서는 --targetDate=YYYY-MM-DD 필요');
     return { startDate: config.targetDate, endDate: config.targetDate };
   }
-  // backfill — 전전달 1일부터 D-1까지
+  // backfill — 올해 1월 1일부터 D-1까지 (v3.5.4부터 전 기간 백필)
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  const twoMonthsAgo = new Date(yesterday.getFullYear(), yesterday.getMonth() - 2, 1); // 전전달 1일
+  const janFirst = new Date(today.getFullYear(), 0, 1);
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return { startDate: fmt(twoMonthsAgo), endDate: fmt(yesterday) };
+  return { startDate: fmt(janFirst), endDate: fmt(yesterday) };
 }
 
 // ── 매출지킴이 API 전송 ──
@@ -444,6 +444,21 @@ function getBackfillDateFilterScript(startDate, endDate) {
 }
 
 // ── DB SalesOrder 매핑 ──
+// v3.5.4: deliveryCost 버그 수정 + 필드명 정리
+//
+// 변경 사항:
+// 1. deliveryCost — 기존 `s.delivery_fee || findItem('배달')` 은 settlement_items의
+//    "배달요금"(매장 수령액)까지 매장 부담 배달비로 잘못 집계했음.
+//    → `findItem('배달대행')` 으로 교체. 없으면 0.
+//
+// 2. 필드 분리 + 이름 명확화:
+//    - sellerDiscount (사장님 부담 할인) — settlement_items에서 "사장님 부담 / 타임 / 프로모션 / 쿠폰"
+//    - platformSubsidy (요기요 보전 할인, 매장 입금 +) — yogiyo_discount_amount
+//    - adCost (광고 상품 이용 대금) — 추천광고 + 요타임딜
+//
+// 3. 레거시 필드는 호환성 위해 유지:
+//    - storeDiscount (기존 이름; 값은 sellerDiscount와 동일하게 제공 → 노심 route pickSellerDiscount로 수용)
+//    - adFee (기존 이름; adCost와 동일값)
 function mapToSalesOrder(order, settlementMap, storeName, storeId) {
   const s = settlementMap[order.order_number] || {};
   const si = s.settlement_info || {};
@@ -452,6 +467,7 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
     const item = items.find(i => (i.item_title || '').includes(keyword));
     return Math.abs(item?.item_amount ?? item?.item_price ?? 0);
   };
+  const sumFind = (...kws) => kws.reduce((a, k) => a + findItem(k), 0);
 
   const menuItems = order.items || [];
   const firstItemName = menuItems[0]?.name || '';
@@ -461,6 +477,13 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
 
   const payMap = { ONLINE: '온라인결제', OFFLINE_CARD: '만나서카드', OFFLINE_CASH: '만나서현금' };
   const channelMap = { VD: '배달', OD: '자체배달', TAKEOUT: '포장' };
+
+  // 새 이름 (v3.5.4)
+  const sellerDiscount = sumFind('사장님', '타임 할인', '프로모션', '쿠폰 할인');
+  const platformSubsidy = Math.abs(si.yogiyo_discount_amount || 0);
+  const adCost = sumFind('추천광고', '요타임딜');
+  // ★ 버그 fix: 배달대행료만 매칭, 없으면 0
+  const deliveryCost = findItem('배달대행');
 
   return {
     storeName,
@@ -475,12 +498,19 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
     menuAmount: order.items_price || 0,
     deliveryIncome: order.delivery_fee || 0,
     orderPrice: order.order_price || 0,
-    commissionFee: findItem('중개') || findItem('이용료'),
+    commissionFee: findItem('주문중개') || findItem('중개') || findItem('이용료'),
     pgFee: findItem('외부결제') || findItem('결제'),
-    deliveryCost: s.delivery_fee || findItem('배달'),
-    storeDiscount: findItem('할인보전') || findItem('요기요') || Math.abs(si.yogiyo_discount_amount || 0),
+    // ── v3.5.4 필드 이름 (노심 route의 pick* 헬퍼가 이 이름을 우선 사용) ──
+    // 레거시 storeDiscount/adFee는 의도적으로 제거:
+    //   v3.5.3에서는 storeDiscount가 "요기요 할인보전"(플랫폼 보전값)이었는데
+    //   v3.5.4에서 의미가 "사장님 부담 할인"으로 바뀌어 혼동 위험.
+    //   노심 route는 이미 platformSubsidy/sellerDiscount/adCost 새 이름을 수신하므로
+    //   레거시 필드 없어도 정상 동작.
+    sellerDiscount,
+    platformSubsidy,
+    adCost,
+    deliveryCost,
     vat: findItem('부가세'),
-    adFee: findItem('광고'),
     settlementAmount: si.settlement_amount || 0,
     settlementDate: si.payment_date || '',
     items: menuItems.map(item => ({
