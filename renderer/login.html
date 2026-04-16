@@ -35,6 +35,20 @@
     </div>
   </div>
 
+  <!-- 업데이트 확인/다운로드 블로킹 오버레이 — 앱 시작 시 자동으로 보이고, 업데이트 없으면 사라짐 -->
+  <div id="updateOverlay" class="update-overlay">
+    <div class="update-content">
+      <div class="spinner"></div>
+      <p id="updateMsg">업데이트 확인 중...</p>
+      <div class="update-progress" id="updateProgress" style="display:none">
+        <div class="update-progress-bar">
+          <div class="update-progress-fill" id="updateFill"></div>
+        </div>
+        <span id="updatePercent">0%</span>
+      </div>
+    </div>
+  </div>
+
   <script src="js/login.js"></script>
 </body>
 </html>

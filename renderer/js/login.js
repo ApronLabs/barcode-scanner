@@ -1,3 +1,39 @@
+// ── 업데이트 오버레이 제어 ──
+// 앱 시작 시 오버레이가 로그인 폼 위에 떠서 상호작용 차단.
+// main 프로세스에서 update-status IPC가 오면 상태별 처리.
+const updateOverlay = document.getElementById('updateOverlay');
+const updateMsg = document.getElementById('updateMsg');
+const updateProgress = document.getElementById('updateProgress');
+const updateFill = document.getElementById('updateFill');
+const updatePercent = document.getElementById('updatePercent');
+
+if (window.api?.onUpdateStatus) {
+  window.api.onUpdateStatus((data) => {
+    switch (data.status) {
+      case 'update-available':
+        updateMsg.textContent = `새 버전 (v${data.version}) 다운로드 중...`;
+        updateProgress.style.display = 'flex';
+        // 스피너 숨기기 (프로그레스바가 대체)
+        updateOverlay.querySelector('.spinner')?.remove();
+        break;
+      case 'downloading':
+        updateFill.style.width = `${data.percent}%`;
+        updatePercent.textContent = `${data.percent}%`;
+        break;
+      case 'downloaded':
+        updateMsg.textContent = '업데이트 설치 중... 잠시 후 재시작됩니다';
+        updateProgress.style.display = 'none';
+        break;
+      case 'no-update':
+      case 'error':
+      case 'timeout':
+        updateOverlay.style.display = 'none';
+        break;
+    }
+  });
+}
+
+// ── 로그인 폼 ──
 const emailInput = document.getElementById('emailInput');
 const passwordInput = document.getElementById('passwordInput');
 const loginBtn = document.getElementById('loginBtn');

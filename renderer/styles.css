@@ -598,3 +598,55 @@ body.output-mode .scanning {
   color: #aaa;
   white-space: nowrap;
 }
+
+/* ── 업데이트 블로킹 오버레이 ── */
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.update-content {
+  text-align: center;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.update-content .spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255,255,255,0.25);
+  border-top-color: #10b981;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin: 0 auto 16px;
+}
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  justify-content: center;
+}
+.update-progress-bar {
+  width: 220px;
+  height: 6px;
+  background: rgba(255,255,255,0.18);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.update-progress-fill {
+  height: 100%;
+  width: 0;
+  background: #10b981;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+#updatePercent {
+  font-size: 13px;
+  color: rgba(255,255,255,0.7);
+  min-width: 36px;
+}

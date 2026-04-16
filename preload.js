@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   onSerialStatus: (callback) => ipcRenderer.on('serial-status', (_, status) => callback(status)),
   onSessionExpired: (callback) => ipcRenderer.on('session-expired', () => callback()),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  onUpdateStatus: (callback) => ipcRenderer.on('update-status', (_, data) => callback(data)),
   getSavedLogin: () => ipcRenderer.invoke('get-saved-login'),
   saveLogin: (email, password) => ipcRenderer.invoke('save-login', { email, password }),
   clearSavedLogin: () => ipcRenderer.invoke('clear-saved-login'),
