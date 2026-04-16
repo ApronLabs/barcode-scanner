@@ -26,7 +26,8 @@ const config = {
   sessionToken: getArg('sessionToken'),       // JWT 토큰
 };
 
-const LOG_FILE = path.join(__dirname, 'poc-baemin-log.txt');
+const os = require('os');
+const LOG_FILE = path.join(os.homedir(), 'poc-baemin-log.txt');
 
 // ── stdout JSON 프로토콜 ──
 function emit(type, data) {
@@ -80,7 +81,10 @@ function getDateRangeByMode() {
 // → dailyMetrics[].spentBudget (일별 광고비, 원 단위)
 async function collectAdCost(shopNumber, startDate, endDate) {
   const apiUrl = `https://self-api.baemin.com/v2/statistics/campaign/cpc/metrics/${shopNumber}?startDate=${startDate}&endDate=${endDate}`;
+  log(`   광고비 API 호출: ${apiUrl}`);
   const result = await fetchViaWebview(apiUrl);
+
+  log(`   광고비 API 응답: ${JSON.stringify(result).substring(0, 500)}`);
 
   if (result?.error) {
     log(`   광고비 API 에러: ${result.error}`);
@@ -91,7 +95,7 @@ async function collectAdCost(shopNumber, startDate, endDate) {
   const costs = dailyMetrics
     .filter(m => m.spentBudget > 0)
     .map(m => ({
-      date: m.date, // YYYY-MM-DD
+      date: m.date,
       amount: m.spentBudget,
     }));
 
