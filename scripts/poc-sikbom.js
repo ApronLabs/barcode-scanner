@@ -173,10 +173,24 @@ function isNaverLoginUrl(url) {
   return url.includes('nid.naver.com') || url.includes('nidlogin');
 }
 
-function waitForNaverRedirect(timeoutMs = 30000) {
+function isFoodspringLoginUrl(url) {
+  return url.includes('foodspring.co.kr/login');
+}
+
+/** 네이버 로그인 + 식봄 로그인 둘 다 감지 */
+function isAnyLoginUrl(url) {
+  return isNaverLoginUrl(url) || isFoodspringLoginUrl(url);
+}
+
+/** 식봄 주문상세 페이지에 도달했는지 확인 */
+function isDetailPageUrl(url) {
+  return url.includes('foodspring.co.kr/order/detail/');
+}
+
+function waitForLoginComplete(timeoutMs = 30000) {
   return new Promise(resolve => {
     const cur = webView.webContents.getURL();
-    if (!isNaverLoginUrl(cur)) { resolve(cur); return; }
+    if (!isAnyLoginUrl(cur)) { resolve(cur); return; }
     let resolved = false;
     const cleanup = () => {
       if (resolved) return; resolved = true;
@@ -185,15 +199,50 @@ function waitForNaverRedirect(timeoutMs = 30000) {
       webView.webContents.removeListener('did-navigate-in-page', onNav);
     };
     const t = setTimeout(() => { cleanup(); resolve(webView.webContents.getURL()); }, timeoutMs);
-    const onNav = (_, url) => { if (!isNaverLoginUrl(url)) { cleanup(); resolve(url); } };
+    const onNav = (_, url) => { if (!isAnyLoginUrl(url)) { cleanup(); resolve(url); } };
     webView.webContents.on('did-navigate', onNav);
     webView.webContents.on('did-navigate-in-page', onNav);
     const poll = setInterval(() => {
       const url = webView.webContents.getURL();
-      if (!isNaverLoginUrl(url)) { cleanup(); resolve(url); }
+      if (!isAnyLoginUrl(url)) { cleanup(); resolve(url); }
     }, 1000);
   });
 }
+
+// 식봄 로그인 페이지에서 "네이버로 로그인" 버튼/링크를 찾아 클릭하는 스크립트.
+// 식봄은 자체 로그인 페이지를 거쳐 네이버 OAuth로 리다이렉트하는 구조.
+const CLICK_NAVER_LOGIN_SCRIPT = `(async function() {
+  await new Promise(r => setTimeout(r, 1000));
+  // 네이버 로그인 링크/버튼 찾기 — 여러 셀렉터 후보
+  const selectors = [
+    'a[href*="naver"]',
+    'button[class*="naver"]',
+    '[class*="naver"] a',
+    '[class*="Naver"] a',
+    'a[class*="sns"]',
+    'a[class*="social"]',
+    'img[alt*="네이버"]',
+    'img[alt*="naver"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      const link = el.closest('a') || el;
+      link.click();
+      return { success: true, used: sel, href: link.href || '' };
+    }
+  }
+  // 폴백: 텍스트 기반 검색
+  const allLinks = document.querySelectorAll('a, button');
+  for (const el of allLinks) {
+    const text = (el.textContent || '').trim();
+    if (text.includes('네이버') || text.includes('NAVER') || text.includes('naver')) {
+      el.click();
+      return { success: true, used: 'text:' + text.slice(0, 30), href: el.href || '' };
+    }
+  }
+  return { success: false, error: 'naver login button not found on foodspring page' };
+})()`;
 
 // ── 서버 API ──
 async function fetchPendingOrders() {
@@ -317,15 +366,18 @@ async function scrapeOrderDetail(detailUrl) {
   await navigateAndWait(detailUrl);
   await sleep(2500);
 
-  // 로그인 페이지로 리다이렉트된 경우 재로그인 1회
+  // 로그인 페이지로 리다이렉트된 경우 재로그인 1회 (식봄/네이버 양쪽 감지)
   let currentUrl = webView.webContents.getURL();
-  if (isNaverLoginUrl(currentUrl)) {
+  if (isAnyLoginUrl(currentUrl)) {
     log('   세션 만료 → 재로그인 시도');
     await performLogin();
-    await navigateAndWait(detailUrl);
-    await sleep(2500);
+    // 로그인 후 detail URL로 다시 이동 (식봄 OAuth callback이 rtn URL로 돌려보내지만 확실히)
+    if (!isDetailPageUrl(webView.webContents.getURL())) {
+      await navigateAndWait(detailUrl);
+      await sleep(2500);
+    }
     currentUrl = webView.webContents.getURL();
-    if (isNaverLoginUrl(currentUrl)) {
+    if (isAnyLoginUrl(currentUrl)) {
       throw new Error('세션 만료 후 재로그인 실패');
     }
   }
@@ -337,40 +389,75 @@ async function scrapeOrderDetail(detailUrl) {
   return parsed;
 }
 
-// ── 로그인 수행 ──
+// ── 로그인 수행 (식봄 자체 로그인 + 네이버 OAuth 2단계) ──
 async function performLogin() {
-  const currentUrl = webView.webContents.getURL();
-  if (!isNaverLoginUrl(currentUrl)) {
+  let currentUrl = webView.webContents.getURL();
+
+  // 어떤 로그인 페이지에도 안 걸리면 이미 세션 유효
+  if (!isAnyLoginUrl(currentUrl)) {
     await postTrace('info', 'login-skip', '이미 로그인 상태 (세션 유효)', { url: currentUrl.slice(0, 200) });
     return true;
   }
 
-  log(`   네이버 로그인 페이지 감지: ${currentUrl.slice(0, 80)}`);
-  await postTrace('info', 'login-auto-submit', '자동 로그인 스크립트 주입', { url: currentUrl.slice(0, 200) });
-  const loginResult = await webView.webContents.executeJavaScript(getNaverLoginScript(config.id, config.pw));
-  log(`   auto login: ${JSON.stringify(loginResult)}`);
-  await postTrace('info', 'login-submitted', `결과: ${JSON.stringify(loginResult)}`);
-  await waitForNaverRedirect(20000);
-  await sleep(2000);
+  // ── Step 1: 식봄 자체 로그인 페이지 → "네이버로 로그인" 버튼 클릭 ──
+  if (isFoodspringLoginUrl(currentUrl)) {
+    log(`   식봄 로그인 페이지 감지: ${currentUrl.slice(0, 80)}`);
+    await postTrace('info', 'foodspring-login', '식봄 로그인 페이지에서 네이버 로그인 버튼 클릭 시도', { url: currentUrl.slice(0, 200) });
 
-  const block = await detectNaverBlock();
-  log(`   block check: ${JSON.stringify(block)}`);
-  if (block.captcha || block.deviceRegister || block.otp) {
-    log('   캡차/기기등록/OTP 감지 → 수동 개입 대기 (최대 120초)');
-    await postTrace('warn', 'login-block', `수동 개입 필요: ${JSON.stringify(block)}`, block);
-    mainWindow.show();
-    emit('status', { msg: '네이버에서 추가 확인이 필요합니다. 창에서 처리해주세요.' });
-    await waitForNaverRedirect(120000);
+    const clickResult = await webView.webContents.executeJavaScript(CLICK_NAVER_LOGIN_SCRIPT);
+    log(`   네이버 로그인 버튼 클릭: ${JSON.stringify(clickResult)}`);
+    await postTrace('info', 'foodspring-naver-click', `결과: ${JSON.stringify(clickResult)}`);
+
+    if (!clickResult.success) {
+      // 버튼을 못 찾으면 visible window로 사장님 수동 개입
+      log('   식봄 로그인 페이지에서 네이버 버튼 못 찾음 → 수동 대기');
+      await postTrace('warn', 'foodspring-login-manual', '네이버 로그인 버튼 못 찾음 — 수동 개입 대기');
+      mainWindow.show();
+      emit('status', { msg: '식봄 로그인 페이지에서 네이버 로그인을 선택해주세요.' });
+      await waitForLoginComplete(120000);
+      await sleep(2000);
+    } else {
+      // 네이버 OAuth 리다이렉트 대기
+      await waitForLoginComplete(20000);
+      await sleep(2000);
+    }
+
+    currentUrl = webView.webContents.getURL();
+  }
+
+  // ── Step 2: 네이버 로그인 페이지 (OAuth 리다이렉트 후) ──
+  if (isNaverLoginUrl(currentUrl)) {
+    log(`   네이버 로그인 페이지 감지: ${currentUrl.slice(0, 80)}`);
+    await postTrace('info', 'login-auto-submit', '네이버 자동 로그인 스크립트 주입', { url: currentUrl.slice(0, 200) });
+
+    const loginResult = await webView.webContents.executeJavaScript(getNaverLoginScript(config.id, config.pw));
+    log(`   auto login: ${JSON.stringify(loginResult)}`);
+    await postTrace('info', 'login-submitted', `결과: ${JSON.stringify(loginResult)}`);
+    await waitForLoginComplete(20000);
     await sleep(2000);
+
+    const block = await detectNaverBlock();
+    log(`   block check: ${JSON.stringify(block)}`);
+    if (block.captcha || block.deviceRegister || block.otp) {
+      log('   캡차/기기등록/OTP 감지 → 수동 개입 대기 (최대 120초)');
+      await postTrace('warn', 'login-block', `수동 개입 필요: ${JSON.stringify(block)}`, block);
+      mainWindow.show();
+      emit('status', { msg: '네이버에서 추가 확인이 필요합니다. 창에서 처리해주세요.' });
+      await waitForLoginComplete(120000);
+      await sleep(2000);
+    }
   }
 
-  const stillOnLogin = isNaverLoginUrl(webView.webContents.getURL());
-  if (stillOnLogin) {
-    await postTrace('error', 'login-failed', '로그인 페이지에서 벗어나지 못함', {
-      url: webView.webContents.getURL().slice(0, 200),
+  // 최종 확인: 로그인 페이지에서 벗어났는지
+  const finalUrl = webView.webContents.getURL();
+  if (isAnyLoginUrl(finalUrl)) {
+    await postTrace('error', 'login-failed', '로그인 실패 — 여전히 로그인 페이지', {
+      url: finalUrl.slice(0, 200),
     });
-    throw new Error('네이버 로그인 실패');
+    throw new Error('로그인 실패: ' + finalUrl.slice(0, 100));
   }
+
+  await postTrace('info', 'login-done', '로그인 완료', { url: finalUrl.slice(0, 200) });
   return true;
 }
 

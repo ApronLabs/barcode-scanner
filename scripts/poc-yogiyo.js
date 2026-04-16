@@ -489,7 +489,10 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
     storeName,
     storeId,
     orderId: order.order_number || '',
-    orderedAt: order.submitted_at || '',
+    // ★ v3.5.6: submitted_at은 KST인데 타임존 없이 내려옴 (예: "2026-03-08 19:43:39").
+    // 그대로 전송하면 노심 route의 new Date()가 UTC로 해석 → order_date 하루 밀림.
+    // +09:00 suffix 추가하여 KST 명시.
+    orderedAt: (order.submitted_at || '').replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/, '$1T$2+09:00') || order.submitted_at || '',
     orderType: order.service_type || '',
     orderStatus: order.transmission_status || '',
     channel: channelMap[order.delivery_method_code] || order.delivery_method_code || '',
