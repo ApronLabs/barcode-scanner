@@ -423,17 +423,22 @@ async function collectOrdersForShop(shopOwnerNumber, shopNumber, startDate, endD
   const LIMIT = 100;
   const allOrders = [];
 
+  // CLOSED + CANCELLED 별도 패스 (배민 API가 콤마 구분 미지원)
+  const statuses = ['CLOSED', 'CANCELLED'];
+
+  for (const orderStatus of statuses) {
+    log(`\n   === ${orderStatus} 주문 수집 ===`);
+
   for (let mi = 0; mi < months.length; mi++) {
     const month = months[mi];
-    log(`\n   -- [${mi + 1}/${months.length}] ${month.start} ~ ${month.end} 조회 --`);
+    log(`\n   -- [${mi + 1}/${months.length}] ${month.start} ~ ${month.end} (${orderStatus}) --`);
     let offset = 0;
     let totalSize = null;
     let pageNum = 0;
 
     while (true) {
       pageNum++;
-      // v3.5.8: CANCELLED도 수집 → route에서 order_status='cancelled' + daily 제외
-      const apiUrl = `https://self-api.baemin.com/v4/orders?offset=${offset}&limit=${LIMIT}&purchaseType=&startDate=${month.start}&endDate=${month.end}&shopOwnerNumber=${shopOwnerNumber}&shopNumbers=${shopNumber}&orderStatus=CLOSED,CANCELLED`;
+      const apiUrl = `https://self-api.baemin.com/v4/orders?offset=${offset}&limit=${LIMIT}&purchaseType=&startDate=${month.start}&endDate=${month.end}&shopOwnerNumber=${shopOwnerNumber}&shopNumbers=${shopNumber}&orderStatus=${orderStatus}`;
 
       let result;
       let retries = 0;
@@ -479,6 +484,8 @@ async function collectOrdersForShop(shopOwnerNumber, shopNumber, startDate, endD
       await sleep(5000);
     }
   }
+
+  } // end statuses loop
 
   return allOrders;
 }
