@@ -28,6 +28,12 @@ process.on('unhandledRejection', (reason) => {
 require('dotenv').config({ path: ['.env.local', '.env'] });
 const { app, BrowserWindow, ipcMain, session, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+
+// electron-log: %APPDATA%/barcode-scanner/logs/main.log 에 기록
+log.transports.file.level = 'info';
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
 const path = require('path');
@@ -1006,15 +1012,29 @@ app.whenReady().then(async () => {
     });
   });
 
-  autoUpdater.on('update-downloaded', () => {
-    console.log('  [UPDATE] 다운로드 완료 — 자동 설치');
+  autoUpdater.on('update-downloaded', (info) => {
+    log.info('[UPDATE] 다운로드 완료:', info.version);
     sendUpdateStatus('downloaded');
-    // oneClick NSIS는 덮어쓰기 방식이라 파일 잠금 없음
-    setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500);
+
+    // 모든 자식 프로세스 강제 종료
+    try { if (scheduler) scheduler.stop(); } catch (e) { log.warn('[UPDATE] scheduler stop:', e.message); }
+    try { if (crawler) crawler.destroy(); } catch (e) { log.warn('[UPDATE] crawler destroy:', e.message); }
+    try { stopSerialPolling(); } catch (e) { log.warn('[UPDATE] serial stop:', e.message); }
+    try { if (keyListener) { keyListener.kill('SIGKILL'); keyListener = null; } } catch (e) { log.warn('[UPDATE] keyListener kill:', e.message); }
+
+    // 모든 윈도우 닫기
+    const wins = BrowserWindow.getAllWindows();
+    wins.forEach(w => { try { w.destroy(); } catch {} });
+
+    log.info('[UPDATE] 프로세스 정리 완료, 3초 후 설치 시작');
+    setTimeout(() => {
+      log.info('[UPDATE] quitAndInstall 호출');
+      autoUpdater.quitAndInstall(true, true);
+    }, 3000);
   });
 
   autoUpdater.on('error', (err) => {
-    console.log('  [UPDATE] 에러:', err.message);
+    log.error('[UPDATE] 에러:', err.message);
     sendUpdateStatus('error');
   });
 
