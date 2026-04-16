@@ -80,27 +80,31 @@ function getDateRangeByMode() {
 // /v2/statistics/campaign/cpc/metrics/{shopNumber}?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 // → dailyMetrics[].spentBudget (일별 광고비, 원 단위)
 async function collectAdCost(shopNumber, startDate, endDate) {
-  const apiUrl = `https://self-api.baemin.com/v2/statistics/campaign/cpc/metrics/${shopNumber}?startDate=${startDate}&endDate=${endDate}`;
-  log(`   광고비 API 호출: ${apiUrl}`);
-  const result = await fetchViaWebview(apiUrl);
+  // 배민 광고비 API는 조회 기간 1개월 제한 → 월별 분할 호출
+  const months = splitMonths(startDate, endDate);
+  const allCosts = [];
 
-  log(`   광고비 API 응답: ${JSON.stringify(result).substring(0, 500)}`);
+  for (const month of months) {
+    const apiUrl = `https://self-api.baemin.com/v2/statistics/campaign/cpc/metrics/${shopNumber}?startDate=${month.start}&endDate=${month.end}`;
+    log(`   광고비 API: ${month.start} ~ ${month.end}`);
+    const result = await fetchViaWebview(apiUrl);
 
-  if (result?.error) {
-    log(`   광고비 API 에러: ${result.error}`);
-    return [];
+    if (result?.error) {
+      log(`   광고비 API 에러 (${month.start}): ${result.error}`);
+      continue;
+    }
+
+    const dailyMetrics = result?.data?.dailyMetrics || [];
+    const costs = dailyMetrics
+      .filter(m => m.spentBudget > 0)
+      .map(m => ({ date: m.date, amount: m.spentBudget }));
+    allCosts.push(...costs);
+
+    if (months.length > 1) await sleep(1000);
   }
 
-  const dailyMetrics = result?.data?.dailyMetrics || [];
-  const costs = dailyMetrics
-    .filter(m => m.spentBudget > 0)
-    .map(m => ({
-      date: m.date,
-      amount: m.spentBudget,
-    }));
-
-  log(`   광고비: ${costs.length}일 / 합계 ${costs.reduce((a, c) => a + c.amount, 0)}원`);
-  return costs;
+  log(`   광고비 합계: ${allCosts.length}일 / ${allCosts.reduce((a, c) => a + c.amount, 0)}원`);
+  return allCosts;
 }
 
 // ── 광고비 별도 전송 ──
