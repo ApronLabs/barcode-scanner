@@ -385,7 +385,7 @@ function mapOrder(item) {
     orderStatus: o.status || null, // CLOSED | CANCELLED (배민 원본 필드명은 status)
     payType: o.payType,
     menuSummary: o.itemsSummary,
-    menuAmount: o.payAmount,
+    menuAmount: (o.payAmount || 0) - (o.deliveryTip || 0), // payAmount는 배달팁 포함이므로 분리
     deliveryTip: o.deliveryTip || 0,
     instantDiscount: o.totalInstantDiscountAmount || 0,
     // ★ v3.5.8: 쿠폰 할인 분리
