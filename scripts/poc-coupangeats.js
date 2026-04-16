@@ -104,6 +104,8 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     orderType: o.status || null,
     menuSummary: o.menuSummary || null,
     totalPayment: o.salePrice || o.amount || 0,
+    // v3.5.5: 총금액(할인 전) — 노심에서 쿠팡부담 쿠폰 역산에 사용
+    totalAmount: o.totalAmount || 0,
     orderSettlement: {
       commissionTotal: o.settlement?.commissionTotal || 0,
       commissionVat: o.settlement?.commissionVat || 0,
