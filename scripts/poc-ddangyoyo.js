@@ -7,6 +7,7 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const POC_VERSION = require('../package.json').version;
 
 // Electron 자동화 감지 비활성화
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
@@ -76,7 +77,7 @@ function getDateRangeByMode() {
 async function sendToSalesKeeper(platform, targetDate, shopId, settlement, orders, orderCount) {
   if (!config.serverUrl || !config.storeId || !config.sessionToken) return null;
   const url = `${config.serverUrl}/api/stores/${config.storeId}/crawler/${platform}`;
-  const body = JSON.stringify({ targetDate, platformStoreId: shopId, settlement, orders, orderCount });
+  const body = JSON.stringify({ targetDate, platformStoreId: shopId, settlement, orders, orderCount, pocVersion: POC_VERSION });
   try {
     const res = await fetch(url, {
       method: 'POST',
