@@ -906,12 +906,17 @@ function createWindow() {
     width: 700,
     height: 750,
     resizable: true,
+    show: false, // HTML 렌더 완료 후 show — 흰 화면 깜빡임 방지 + 오버레이 먼저 보이게
     title: '매출지킴이 바코드 스캐너',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
   });
 
   mainWindow.setMenuBarVisibility(false);
@@ -968,50 +973,53 @@ app.whenReady().then(async () => {
   });
   scheduler.start();
 
-  // Auto updater
+  // ── Auto updater (강제 업데이트 — 사용자 개입 없음) ──
+  // 앱 시작 즉시 업데이트 체크. 업데이트 있으면 자동 다운로드 → 자동 재시작.
+  // 로그인 화면에 블로킹 오버레이("업데이트 확인 중...")가 떠서 사용자가 skip 불가.
+  // 오버레이 제어는 renderer의 login.js에서 'update-status' IPC 이벤트로 처리.
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  let updateResolved = false;
+  function sendUpdateStatus(status, extra = {}) {
+    // 'downloading'은 반복 전송(프로그레스), 나머지는 1회만
+    if (status !== 'downloading' && updateResolved) return;
+    if (status !== 'downloading') updateResolved = true;
+    mainWindow?.webContents.send('update-status', { status, ...extra });
+  }
+
   autoUpdater.on('update-available', (info) => {
     console.log('  [UPDATE] 업데이트 발견:', info.version);
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '업데이트 알림',
-      message: `새 버전 (v${info.version})이 있습니다.\n업데이트를 다운로드할까요?`,
-      buttons: ['업데이트', '나중에'],
-      defaultId: 0,
-    }).then(({ response }) => {
-      if (response === 0) {
-        autoUpdater.downloadUpdate();
-      }
+    sendUpdateStatus('update-available', { version: info.version });
+    autoUpdater.downloadUpdate();
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('  [UPDATE] 최신 버전');
+    sendUpdateStatus('no-update');
+  });
+
+  autoUpdater.on('download-progress', (p) => {
+    mainWindow?.webContents.send('update-status', {
+      status: 'downloading',
+      percent: Math.round(p.percent),
     });
   });
 
   autoUpdater.on('update-downloaded', () => {
-    console.log('  [UPDATE] 다운로드 완료');
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '업데이트 준비 완료',
-      message: '업데이트가 다운로드되었습니다.\n지금 재시작하여 설치할까요?',
-      buttons: ['지금 재시작', '나중에'],
-      defaultId: 0,
-    }).then(({ response }) => {
-      if (response === 0) {
-        autoUpdater.quitAndInstall();
-      }
-    });
+    console.log('  [UPDATE] 다운로드 완료 — 1.5초 후 자동 재시작');
+    sendUpdateStatus('downloaded');
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500);
   });
 
   autoUpdater.on('error', (err) => {
     console.log('  [UPDATE] 에러:', err.message);
+    sendUpdateStatus('error');
   });
 
-  // Check for updates after 3 seconds
-  setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.log('  [UPDATE] 체크 실패:', err.message);
-    });
-  }, 3000);
+  // 즉시 체크 (기존 3초 딜레이 제거) + 4초 네트워크 타임아웃
+  autoUpdater.checkForUpdates().catch(() => sendUpdateStatus('error'));
+  setTimeout(() => sendUpdateStatus('timeout'), 4000);
 });
 
 app.on('window-all-closed', () => {
