@@ -24,6 +24,7 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const POC_VERSION = require('../package.json').version;
 
 // ── CLI 인자 파싱 ──
 function getArg(name) {
@@ -266,7 +267,7 @@ async function postScraped(supplierOrderId, scraped) {
       'Content-Type': 'application/json',
       Cookie: `session-token=${config.sessionToken}`,
     },
-    body: JSON.stringify({ supplierOrderId, scraped }),
+    body: JSON.stringify({ supplierOrderId, scraped, pocVersion: POC_VERSION }),
   });
   const text = await res.text();
   log(`   ingest ${supplierOrderId}: ${res.status} ${text.slice(0, 200)}`);

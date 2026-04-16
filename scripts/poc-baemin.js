@@ -8,6 +8,8 @@ const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+const POC_VERSION = require('../package.json').version;
+
 // ── CLI 인자 파싱 ──
 function getArg(name) {
   const a = process.argv.find(a => a.startsWith(`--${name}=`));
@@ -163,6 +165,7 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     targetDate,
     platformStoreId: shopId,
     brandName: shopName,
+    pocVersion: POC_VERSION,
     orders: mappedOrders,
   });
   try {

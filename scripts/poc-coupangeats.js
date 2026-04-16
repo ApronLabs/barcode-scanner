@@ -7,6 +7,7 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const POC_VERSION = require('../package.json').version;
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
@@ -127,6 +128,7 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     platformStoreId: shopId,
     brandName: shopName,
     orders: mappedOrders,
+    pocVersion: POC_VERSION,
   });
   try {
     const res = await fetch(url, {

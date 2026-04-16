@@ -11,6 +11,7 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const POC_VERSION = require('../package.json').version;
 
 // ── CLI 인자 파싱 ──
 function getArg(name) {
@@ -98,6 +99,7 @@ async function sendToSalesKeeper(targetDate, platformStoreId, salesData, rawData
     platformStoreId,
     sales: salesData,
     rawData,
+    pocVersion: POC_VERSION,
   });
   try {
     const res = await fetch(url, {
