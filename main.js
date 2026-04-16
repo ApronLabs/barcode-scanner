@@ -1007,9 +1007,14 @@ app.whenReady().then(async () => {
   });
 
   autoUpdater.on('update-downloaded', () => {
-    console.log('  [UPDATE] 다운로드 완료 — 1.5초 후 자동 재시작');
+    console.log('  [UPDATE] 다운로드 완료 — 프로세스 정리 후 설치');
     sendUpdateStatus('downloaded');
-    setTimeout(() => autoUpdater.quitAndInstall(true, true), 1500);
+    // 구 프로세스 파일 잠금 방지: scheduler/crawler 등 자식 프로세스 먼저 정리
+    try {
+      if (scheduler) scheduler.stop();
+      if (crawler) crawler.destroy();
+    } catch {}
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 2500);
   });
 
   autoUpdater.on('error', (err) => {
@@ -1017,9 +1022,9 @@ app.whenReady().then(async () => {
     sendUpdateStatus('error');
   });
 
-  // 즉시 체크 (기존 3초 딜레이 제거) + 4초 네트워크 타임아웃
+  // 즉시 체크 + 15초 네트워크 타임아웃 (GitHub CDN 느릴 때 대비)
   autoUpdater.checkForUpdates().catch(() => sendUpdateStatus('error'));
-  setTimeout(() => sendUpdateStatus('timeout'), 4000);
+  setTimeout(() => sendUpdateStatus('timeout'), 15000);
 });
 
 app.on('window-all-closed', () => {
