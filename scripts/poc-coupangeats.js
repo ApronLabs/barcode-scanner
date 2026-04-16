@@ -7,7 +7,7 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const POC_VERSION = require('../package.json').version;
+const POC_VERSION = app.getVersion() || 'unknown';
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');

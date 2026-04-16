@@ -11,7 +11,7 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const POC_VERSION = require('../package.json').version;
+const POC_VERSION = app.getVersion() || 'unknown';
 
 // ── CLI 인자 파싱 ──
 function getArg(name) {
