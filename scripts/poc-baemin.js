@@ -73,6 +73,57 @@ function getDateRangeByMode() {
   return { startDate: getBackfillStart(), endDate: getYesterday() };
 }
 
+// ── 배민 CPC 광고비 수집 ──
+// /v2/statistics/campaign/cpc/metrics/{shopNumber}?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+// → dailyMetrics[].spentBudget (일별 광고비, 원 단위)
+async function collectAdCost(shopNumber, startDate, endDate) {
+  const apiUrl = `https://self-api.baemin.com/v2/statistics/campaign/cpc/metrics/${shopNumber}?startDate=${startDate}&endDate=${endDate}`;
+  const result = await fetchViaWebview(apiUrl);
+
+  if (result?.error) {
+    log(`   광고비 API 에러: ${result.error}`);
+    return [];
+  }
+
+  const dailyMetrics = result?.data?.dailyMetrics || [];
+  const costs = dailyMetrics
+    .filter(m => m.spentBudget > 0)
+    .map(m => ({
+      date: m.date, // YYYY-MM-DD
+      amount: m.spentBudget,
+    }));
+
+  log(`   광고비: ${costs.length}일 / 합계 ${costs.reduce((a, c) => a + c.amount, 0)}원`);
+  return costs;
+}
+
+// ── 광고비 별도 전송 ──
+async function sendAdCostToSalesKeeper(shopId, dailyAdCosts) {
+  if (!config.serverUrl || !config.storeId || !config.sessionToken) return null;
+  if (!dailyAdCosts || dailyAdCosts.length === 0) return null;
+
+  const url = `${config.serverUrl}/api/stores/${config.storeId}/crawler/baemin/ad-cost`;
+  const body = JSON.stringify({
+    platformStoreId: shopId,
+    dailyAdCosts,
+  });
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `session-token=${config.sessionToken}`,
+      },
+      body,
+    });
+    log(`   광고비 API 전송: ${res.status} (${dailyAdCosts.length}일)`);
+    return { status: res.status, ok: res.ok };
+  } catch (err) {
+    log(`   광고비 API 전송 실패: ${err.message}`);
+    return null;
+  }
+}
+
 // ── 매출지킴이 API 전송 ──
 async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders) {
   if (!config.serverUrl || !config.storeId || !config.sessionToken) return null;
@@ -83,6 +134,7 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     orderId: o.orderId || o.orderNo,
     orderedAt: o.orderedAt || o.date,
     orderType: o.deliveryType || null,
+    orderStatus: o.orderStatus || null, // v3.5.8: CLOSED | CANCELLED
     channel: null,
     paymentMethod: o.payType || null,
     menuSummary: o.menuSummary || null,
@@ -94,6 +146,9 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     deliveryCost: o.deliveryCost || 0,
     tipDiscount: 0,
     storeDiscount: o.instantDiscount || 0,
+    // v3.5.8: 쿠폰 할인 분리
+    ownerCouponDiscount: o.ownerCouponDiscount || 0,
+    platformSubsidy: o.platformSubsidy || 0,
     vat: o.vat || 0,
     smallOrderFee: 0,
     cupDeposit: 0,
@@ -301,17 +356,30 @@ function fetchViaWebview(apiUrl) {
 function mapOrder(item) {
   const o = item.order, s = item.settle;
   const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount || 0;
+
+  // ★ v3.5.8: orderedAt에 +09:00 KST suffix 추가.
+  // 배민 API는 "2026-04-13T17:18:38" (TZ 없음)을 KST로 내려주는데,
+  // 노심 route의 new Date()가 UTC로 해석하면 order_date가 하루 밀린다.
+  let orderedAt = o.orderDateTime || '';
+  if (orderedAt && !orderedAt.includes('+') && !orderedAt.includes('Z')) {
+    orderedAt = orderedAt + '+09:00';
+  }
+
   return {
     orderNo: o.orderNumber,
     orderId: o.orderNumber,
-    orderedAt: o.orderDateTime,
+    orderedAt,
     date: o.orderDateTime,
     deliveryType: o.deliveryType,
+    orderStatus: o.orderStatus || null, // CLOSED | CANCELLED
     payType: o.payType,
     menuSummary: o.itemsSummary,
     menuAmount: o.payAmount,
     deliveryTip: o.deliveryTip || 0,
     instantDiscount: o.totalInstantDiscountAmount || 0,
+    // ★ v3.5.8: 쿠폰 할인 분리
+    ownerCouponDiscount: o.ownerChargeCouponDiscountAmount || 0,
+    platformSubsidy: o.baeminChargeCouponDiscountAmount || 0,
     commissionFee: Math.abs(findCode(s?.orderBrokerageItems, 'ADVERTISE_FEE')),
     pgFee: Math.abs(findCode(s?.etcItems, 'SERVICE_FEE')),
     deliveryCost: s?.deliveryItemAmount || 0,
@@ -319,7 +387,7 @@ function mapOrder(item) {
     meetAmount: s?.meetAmount || 0,
     depositDueAmount: s?.depositDueAmount || 0,
     depositDueDate: s?.depositDueDate || '',
-    // ★ v3.5.4: 원본 보존 — 배민 2차 백필에서 광고비/배민분담 분리 근거
+    // ★ v3.5.4: 원본 보존 — 백필 스크립트가 raw_data에서 재추출 가능
     rawItem: item,
   };
 }
@@ -361,7 +429,8 @@ async function collectOrdersForShop(shopOwnerNumber, shopNumber, startDate, endD
 
     while (true) {
       pageNum++;
-      const apiUrl = `https://self-api.baemin.com/v4/orders?offset=${offset}&limit=${LIMIT}&purchaseType=&startDate=${month.start}&endDate=${month.end}&shopOwnerNumber=${shopOwnerNumber}&shopNumbers=${shopNumber}&orderStatus=CLOSED`;
+      // v3.5.8: CANCELLED도 수집 → route에서 order_status='cancelled' + daily 제외
+      const apiUrl = `https://self-api.baemin.com/v4/orders?offset=${offset}&limit=${LIMIT}&purchaseType=&startDate=${month.start}&endDate=${month.end}&shopOwnerNumber=${shopOwnerNumber}&shopNumbers=${shopNumber}&orderStatus=CLOSED,CANCELLED`;
 
       let result;
       let retries = 0;
@@ -731,6 +800,13 @@ app.whenReady().then(async () => {
       for (const dateKey of sortedDates) {
         const dayOrders = byDate[dateKey].orders;
         await sendToSalesKeeper('baemin', dateKey, shop.shopNumber, shop.shopName, dayOrders);
+      }
+
+      // ★ v3.5.8: CPC 광고비 수집 + 별도 엔드포인트 전송
+      log(`\n   광고비(CPC) 수집: ${startDate} ~ ${endDate}`);
+      const adCosts = await collectAdCost(shop.shopNumber, startDate, endDate);
+      if (adCosts.length > 0) {
+        await sendAdCostToSalesKeeper(shop.shopNumber, adCosts);
       }
 
       // 매장별 합계
