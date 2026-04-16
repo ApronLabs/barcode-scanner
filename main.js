@@ -1015,57 +1015,12 @@ app.whenReady().then(async () => {
   autoUpdater.on('update-downloaded', (info) => {
     log.info('[UPDATE] 다운로드 완료:', info.version);
     sendUpdateStatus('downloaded');
-
-    // 다운로드된 인스톨러 경로 찾기
-    const cacheDir = path.join(app.getPath('userData'), 'update-cache');
-    const pendingDir = path.dirname(autoUpdater.downloadedUpdateHelper?.cacheDir || cacheDir);
-    let installerPath = '';
-    try {
-      // electron-updater 캐시에서 exe 찾기
-      const updateDir = autoUpdater.downloadedUpdateHelper?.cacheDir
-        || path.join(app.getPath('userData'), '..', 'barcode-scanner-updater');
-      const files = fs.readdirSync(updateDir).filter(f => f.endsWith('.exe'));
-      if (files.length > 0) {
-        installerPath = path.join(updateDir, files[files.length - 1]);
-      }
-    } catch (e) {
-      log.warn('[UPDATE] 캐시 디렉토리 탐색 실패:', e.message);
-    }
-
-    // 캐시에서 못 찾으면 기본 경로 시도
-    if (!installerPath) {
-      const possiblePaths = [
-        path.join(app.getPath('temp'), `barcode-scanner-setup-${info.version}.exe`),
-        path.join(app.getPath('userData'), '..', 'barcode-scanner-updater', `barcode-scanner-setup-${info.version}.exe`),
-      ];
-      installerPath = possiblePaths.find(p => fs.existsSync(p)) || '';
-    }
-
-    log.info('[UPDATE] 인스톨러 경로:', installerPath || '(못 찾음 — quitAndInstall fallback)');
-
-    if (installerPath && fs.existsSync(installerPath)) {
-      // ★ 배치 파일 방식: 앱 완전 종료 후 인스톨러 실행
-      // 앱 프로세스가 파일을 잡고 있는 동안 인스톨러가 실행되는 문제 근본 해결
-      const batPath = path.join(app.getPath('temp'), 'barcode-update.bat');
-      const batContent = [
-        '@echo off',
-        'echo Waiting for app to exit...',
-        'timeout /t 5 /nobreak >nul',
-        `start "" "${installerPath}" /S --force-run`,
-        `del "%~f0"`,
-      ].join('\r\n');
-      fs.writeFileSync(batPath, batContent);
-      log.info('[UPDATE] 배치 파일 생성:', batPath);
-
-      const { spawn } = require('child_process');
-      spawn('cmd.exe', ['/c', batPath], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      log.info('[UPDATE] 배치 실행 완료, 앱 강제 종료');
-      process.exit(0);
-    } else {
-      // fallback: 기존 방식
-      log.info('[UPDATE] fallback: quitAndInstall');
-      setTimeout(() => autoUpdater.quitAndInstall(true, true), 3000);
-    }
+    // installer.nsh의 customInit 매크로가 taskkill로 앱을 강제 종료하므로
+    // 여기서는 단순히 quitAndInstall만 호출하면 된다.
+    setTimeout(() => {
+      log.info('[UPDATE] quitAndInstall 호출');
+      autoUpdater.quitAndInstall(true, true);
+    }, 1500);
   });
 
   autoUpdater.on('error', (err) => {
