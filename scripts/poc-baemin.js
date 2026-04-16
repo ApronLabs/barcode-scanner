@@ -144,7 +144,7 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     orderId: o.orderId || o.orderNo,
     orderedAt: o.orderedAt || o.date,
     orderType: o.deliveryType || null,
-    orderStatus: o.orderStatus || null, // v3.5.8: CLOSED | CANCELLED
+    orderStatus: o.status || null, // CLOSED | CANCELLED (배민 API 필드명은 status)
     channel: null,
     paymentMethod: o.payType || null,
     menuSummary: o.menuSummary || null,
