@@ -1009,12 +1009,18 @@ app.whenReady().then(async () => {
   autoUpdater.on('update-downloaded', () => {
     console.log('  [UPDATE] 다운로드 완료 — 프로세스 정리 후 설치');
     sendUpdateStatus('downloaded');
-    // 구 프로세스 파일 잠금 방지: scheduler/crawler 등 자식 프로세스 먼저 정리
+    // 파일 잠금 에러 방지: 모든 자식 프로세스 정리 + 앱 종료 후 인스톨러 실행
     try {
       if (scheduler) scheduler.stop();
       if (crawler) crawler.destroy();
+      stopSerialPolling();
+      if (keyListener) { keyListener.kill(); keyListener = null; }
     } catch {}
-    setTimeout(() => autoUpdater.quitAndInstall(true, true), 2500);
+    // autoInstallOnAppQuit=true이므로 app.quit()만 하면
+    // Electron이 종료 직후 인스톨러를 자동 실행한다.
+    // quitAndInstall()은 앱이 아직 살아있는 상태에서 인스톨러를 띄워
+    // "failed to uninstall old files" 에러가 날 수 있으므로 사용하지 않는다.
+    setTimeout(() => app.quit(), 1500);
   });
 
   autoUpdater.on('error', (err) => {
