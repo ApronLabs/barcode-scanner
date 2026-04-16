@@ -144,7 +144,7 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     orderId: o.orderId || o.orderNo,
     orderedAt: o.orderedAt || o.date,
     orderType: o.deliveryType || null,
-    orderStatus: o.status || null, // CLOSED | CANCELLED (배민 API 필드명은 status)
+    orderStatus: o.orderStatus || null, // CLOSED | CANCELLED
     channel: null,
     paymentMethod: o.payType || null,
     menuSummary: o.menuSummary || null,
@@ -382,7 +382,7 @@ function mapOrder(item) {
     orderedAt,
     date: o.orderDateTime,
     deliveryType: o.deliveryType,
-    orderStatus: o.orderStatus || null, // CLOSED | CANCELLED
+    orderStatus: o.status || null, // CLOSED | CANCELLED (배민 원본 필드명은 status)
     payType: o.payType,
     menuSummary: o.itemsSummary,
     menuAmount: o.payAmount,
