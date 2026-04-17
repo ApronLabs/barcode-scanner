@@ -79,7 +79,7 @@ function getDateRangeByMode() {
 // ── 배민 CPC 광고비 수집 ──
 // /v2/statistics/campaign/cpc/metrics/{shopNumber}?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 // → dailyMetrics[].spentBudget (일별 광고비, 원 단위)
-async function collectAdCost(shopNumber, startDate, endDate) {
+async function collectAdCost(shopNumber, startDate, endDate, settlementDateMap = new Map()) {
   // 배민 광고비 API는 조회 기간 1개월 제한 → 월별 분할 호출
   const months = splitMonths(startDate, endDate);
   const allCosts = [];
@@ -95,15 +95,22 @@ async function collectAdCost(shopNumber, startDate, endDate) {
     }
 
     const dailyMetrics = result?.data?.dailyMetrics || [];
+    // ★ v3.9.0: settlement_date 포함 (해당 매출일의 주문 depositDueDate 재사용).
+    // 배민 CPC API는 settlement_date를 제공하지 않으므로 주문 데이터 맵에서 조회.
     const costs = dailyMetrics
       .filter(m => m.spentBudget > 0)
-      .map(m => ({ date: m.date, amount: m.spentBudget }));
+      .map(m => ({
+        date: m.date,
+        amount: m.spentBudget,
+        settlementDate: settlementDateMap.get(m.date) || null,
+      }));
     allCosts.push(...costs);
 
     if (months.length > 1) await sleep(1000);
   }
 
-  log(`   광고비 합계: ${allCosts.length}일 / ${allCosts.reduce((a, c) => a + c.amount, 0)}원`);
+  const withSettleDate = allCosts.filter(c => c.settlementDate).length;
+  log(`   광고비 합계: ${allCosts.length}일 / ${allCosts.reduce((a, c) => a + c.amount, 0)}원 (settlement_date 매핑: ${withSettleDate}/${allCosts.length})`);
   return allCosts;
 }
 
@@ -821,8 +828,18 @@ app.whenReady().then(async () => {
       }
 
       // ★ v3.5.8: CPC 광고비 수집 + 별도 엔드포인트 전송
-      log(`\n   광고비(CPC) 수집: ${startDate} ~ ${endDate}`);
-      const adCosts = await collectAdCost(shop.shopNumber, startDate, endDate);
+      // ★ v3.9.0: 주문 데이터에서 매출일 → settlement_date 맵 구성 (광고비 settlement_date 정확도)
+      const settlementDateMap = new Map();
+      for (const m of mapped) {
+        if (m.orderStatus === 'CANCELLED') continue;
+        if (!m.date || !m.depositDueDate) continue;
+        const dateKey = String(m.date).slice(0, 10);
+        if (!settlementDateMap.has(dateKey)) {
+          settlementDateMap.set(dateKey, m.depositDueDate);
+        }
+      }
+      log(`\n   광고비(CPC) 수집: ${startDate} ~ ${endDate} (settle 맵 ${settlementDateMap.size}일)`);
+      const adCosts = await collectAdCost(shop.shopNumber, startDate, endDate, settlementDateMap);
       if (adCosts.length > 0) {
         await sendAdCostToSalesKeeper(shop.shopNumber, adCosts);
       }

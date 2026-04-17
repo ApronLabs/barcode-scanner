@@ -25,3 +25,7 @@ old-backup/
 crawl-result-*.json
 *.log.txt
 poc-*-log.txt
+
+# Debug POC scripts (local-only)
+scripts/poc-*-debug.js
+scripts/poc-*-debug-log.txt
