@@ -203,6 +203,9 @@ function mapToSalesOrder(order, storeName) {
     isRegularCustomer: order.regl_cust_yn === 'Y',
     storeName: storeName,
     items: [],
+    // 탐사용: 땡겨요 API raw 응답 보존. 수수료 필드(ord_medi_amt/setl_ajst_amt/
+    // delv_agnt_amt 등) spec 확인 후 다음 버전에서 매핑 구현.
+    rawOrder: order,
   };
 }
 
@@ -685,6 +688,17 @@ app.whenReady().then(async () => {
         allOrders = allOrders.concat(uniqueNew);
         pageNum++;
         await sleep(1000);
+      }
+
+      // 탐사용: 첫 주문의 raw 필드 키 로그 (수수료 필드 spec 파악)
+      if (allOrders.length > 0) {
+        const sample = allOrders[0];
+        const keys = Object.keys(sample).sort();
+        log(`   [탐사] raw order 필드 ${keys.length}개: ${keys.join(', ')}`);
+        // 수수료 관련 잠재 필드 값 찍기
+        const candidates = ['ord_medi_amt', 'setl_ajst_amt', 'delv_agnt_amt', 'delvfee_amt', 'patstos_coup_amt', 'medi_amt', 'ajst_amt', 'coup_amt', 'medi_use_fee', 'setl_fee'];
+        const found = candidates.filter(k => k in sample).map(k => `${k}=${sample[k]}`);
+        if (found.length) log(`   [탐사] 수수료 후보 필드: ${found.join(' / ')}`);
       }
 
       // 날짜별 그룹핑
