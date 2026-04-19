@@ -1,6 +1,6 @@
 {
   "name": "barcode-scanner",
-  "version": "3.9.3",
+  "version": "3.9.4",
   "description": "매출지킴이 바코드 스캐너",
   "main": "main.js",
   "author": "Semicolon Dev Team",
@@ -44,7 +44,8 @@
     "asarUnpack": [
       "**/node_modules/serialport/**",
       "**/node_modules/@serialport/**",
-      "scripts/poc-*.js"
+      "scripts/poc-*.js",
+      "scripts/lib/**/*"
     ],
     "win": {
       "target": [
