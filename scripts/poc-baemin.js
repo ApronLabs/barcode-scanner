@@ -158,11 +158,18 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     menuAmount: o.menuAmount || 0,
     deliveryIncome: o.deliveryTip || 0,
     tipIncome: 0,
+    // v3.9.2: 각 수수료 공급가 + VAT 이원 전송
     commissionFee: o.commissionFee || 0,
+    commissionFeeVat: o.commissionFeeVat || 0,
     pgFee: o.pgFee || 0,
+    pgFeeVat: o.pgFeeVat || 0,
     deliveryCost: o.deliveryCost || 0,
-    tipDiscount: 0,
-    storeDiscount: o.instantDiscount || 0,
+    deliveryFeeVat: o.deliveryFeeVat || 0,
+    tipDiscount: o.deliveryTipDiscount || 0,
+    tipDiscountVat: o.deliveryTipDiscountVat || 0,
+    // v3.9.2: 매장 순부담 할인 (DISCOUNT_AMOUNT net), UI 표시 즉시할인 별도
+    storeDiscount: o.storeDiscount || 0,
+    instantDiscount: o.instantDiscount || 0,
     // v3.5.8: 쿠폰 할인 분리
     ownerCouponDiscount: o.ownerCouponDiscount || 0,
     platformSubsidy: o.platformSubsidy || 0,
@@ -368,20 +375,39 @@ function fetchViaWebview(apiUrl) {
 }
 
 // ── 데이터 매핑 함수 ──
-// v3.5.4: 원본 API 응답(item)을 rawItem으로 보존한다.
-// 노심 route(baemin/route.ts)의 raw_data에 저장되어, 노심 백필 스크립트가
-// remapBaemin에서 광고비/배민분담 등 분리된 필드를 재추출할 수 있게 한다.
+// v3.9.2: 배민 정산명세서 A+B+C+D 블록 구조와 원 단위 일치하도록 필드 재정의.
+//   - sale_price: orderBrokerageItems[ORDER_AMOUNT] (할인 전 주문금액, 옵션 포함)
+//   - storeDiscount: orderBrokerageItems[DISCOUNT_AMOUNT] 절대값 (고객할인비용, 매장 순부담)
+//   - commissionFee/deliveryCost/deliveryTipDiscount/pgFee: 각 code 별 공급가 (양수 정규화)
+//   - *FeeVat: 공급가 비례분배 (배민은 deductionAmountTotalVat 합계만 제공)
+// 원본은 rawItem 에 보존 — 필요 시 노심 백필이 재추출 가능.
 function mapOrder(item) {
   const o = item.order, s = item.settle;
-  const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount || 0;
+  const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount ?? 0;
 
-  // ★ v3.5.8: orderedAt에 +09:00 KST suffix 추가.
-  // 배민 API는 "2026-04-13T17:18:38" (TZ 없음)을 KST로 내려주는데,
-  // 노심 route의 new Date()가 UTC로 해석하면 order_date가 하루 밀린다.
+  // orderedAt KST suffix (v3.5.8 유지)
   let orderedAt = o.orderDateTime || '';
   if (orderedAt && !orderedAt.includes('+') && !orderedAt.includes('Z')) {
     orderedAt = orderedAt + '+09:00';
   }
+
+  // 공급가 (모두 양수로 정규화)
+  const saleAmount = findCode(s?.orderBrokerageItems, 'ORDER_AMOUNT') || o.payAmount || 0;
+  const storeDiscount = Math.abs(findCode(s?.orderBrokerageItems, 'DISCOUNT_AMOUNT'));
+  const commissionFee = Math.abs(findCode(s?.orderBrokerageItems, 'ADVERTISE_FEE'));
+  const deliveryCost = Math.abs(findCode(s?.deliveryItems, 'DELIVERY_SUPPLY_PRICE'));
+  const deliveryTipDiscount = Math.abs(findCode(s?.deliveryItems, 'DEVLIERY_TIP_INSTANT_DISCOUNT'));
+  const pgFee = Math.abs(findCode(s?.etcItems, 'SERVICE_FEE'));
+
+  // VAT 공급가 비례분배 (배민은 합계만 제공)
+  const vatTotal = Math.abs(s?.deductionAmountTotalVat ?? 0);
+  const supplySum = commissionFee + deliveryCost + deliveryTipDiscount + pgFee;
+  const allocVat = (supply) => supplySum > 0 ? Math.round(vatTotal * supply / supplySum) : 0;
+  const commissionFeeVat = allocVat(commissionFee);
+  const deliveryFeeVat = allocVat(deliveryCost);
+  const deliveryTipDiscountVat = allocVat(deliveryTipDiscount);
+  // 잔차는 pgFeeVat 에 몰아넣어 반올림 누적 오차 0 보장
+  const pgFeeVat = Math.max(0, vatTotal - commissionFeeVat - deliveryFeeVat - deliveryTipDiscountVat);
 
   return {
     orderNo: o.orderNumber,
@@ -389,23 +415,30 @@ function mapOrder(item) {
     orderedAt,
     date: o.orderDateTime,
     deliveryType: o.deliveryType,
-    orderStatus: o.status || null, // CLOSED | CANCELLED (배민 원본 필드명은 status)
+    orderStatus: o.status || null,
     payType: o.payType,
     menuSummary: o.itemsSummary,
-    menuAmount: (o.payAmount || 0) - (o.deliveryTip || 0), // payAmount는 배달팁 포함이므로 분리
+    // 주문금액 — 할인 전. 배민 정산서 "총매출"과 일치.
+    menuAmount: saleAmount,
     deliveryTip: o.deliveryTip || 0,
     instantDiscount: o.totalInstantDiscountAmount || 0,
-    // ★ v3.5.8: 쿠폰 할인 분리
+    // 고객할인비용 — 매장 순부담 (DISCOUNT_AMOUNT depth3 합산된 net 값)
+    storeDiscount,
     ownerCouponDiscount: o.ownerChargeCouponDiscountAmount || 0,
     platformSubsidy: o.baeminChargeCouponDiscountAmount || 0,
-    commissionFee: Math.abs(findCode(s?.orderBrokerageItems, 'ADVERTISE_FEE')),
-    pgFee: Math.abs(findCode(s?.etcItems, 'SERVICE_FEE')),
-    deliveryCost: s?.deliveryItemAmount || 0,
-    vat: s?.deductionAmountTotalVat || 0,
+    // 각 수수료: 공급가 + VAT 이원
+    commissionFee,
+    commissionFeeVat,
+    pgFee,
+    pgFeeVat,
+    deliveryCost,
+    deliveryFeeVat,
+    deliveryTipDiscount,
+    deliveryTipDiscountVat,
+    vat: vatTotal,
     meetAmount: s?.meetAmount || 0,
     depositDueAmount: s?.depositDueAmount || 0,
     depositDueDate: s?.depositDueDate || '',
-    // ★ v3.5.4: 원본 보존 — 백필 스크립트가 raw_data에서 재추출 가능
     rawItem: item,
   };
 }
