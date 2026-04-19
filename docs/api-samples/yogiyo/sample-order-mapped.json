@@ -1,0 +1,24 @@
+{
+  "orderId": "F2603081021JJ4ED",
+  "orderedAt": "2026-03-08 10:21:28",
+  "orderType": "TAKEOUT",
+  "channel": "",
+  "paymentMethod": "온라인결제",
+  "menuSummary": "[고기왕창] 2~3인 숙성김치찜",
+  "menuAmount": 28100,
+  "deliveryIncome": 0,
+  "commissionFee": 2380,
+  "pgFee": 695,
+  "deliveryCost": 0,
+  "storeDiscount": 1858,
+  "vat": 0,
+  "adFee": 0,
+  "settlementAmount": 25025,
+  "settlementDate": "2026-03-12T15:00:00.000Z",
+  "items": [
+    {
+      "menuName": "[고기왕창] 2~3인 숙성김치찜",
+      "quantity": 1
+    }
+  ]
+}

@@ -1,0 +1,216 @@
+{
+  "orderId": "T2B00001VABU",
+  "orderedAt": "2026-03-08T22:31:39",
+  "orderType": "delivery",
+  "channel": "DELIVERY",
+  "paymentMethod": "BARO",
+  "menuSummary": "봄동비빔밥 한 상 (찜/찌개)세트",
+  "menuAmount": 24200,
+  "deliveryTip": 0,
+  "instantDiscount": 4000,
+  "commissionFee": 1966,
+  "pgFee": 756,
+  "deliveryCost": 4309,
+  "vat": 704,
+  "meetPayment": 0,
+  "settlementAmount": 17465,
+  "settlementDate": "2026-03-11",
+  "platformDiscount": 2000,
+  "rawData": {
+    "order": {
+      "orderNumber": "T2B00001VABU",
+      "status": "CLOSED",
+      "deliveryType": "DELIVERY",
+      "payType": "BARO",
+      "payAmount": 24200,
+      "orderDateTime": "2026-03-08T22:31:39",
+      "shopNumber": 14071256,
+      "itemsSummary": "봄동비빔밥 한 상 (찜/찌개)세트",
+      "items": [
+        {
+          "name": "봄동비빔밥 한 상 (찜/찌개)세트",
+          "totalPrice": 27200,
+          "quantity": 1,
+          "discountPrice": 0,
+          "options": [
+            {
+              "name": "찐 순두부찌개",
+              "price": 0,
+              "discountPrice": 0
+            },
+            {
+              "name": "달걀후라이 2개 추가",
+              "price": 2000,
+              "discountPrice": 0
+            },
+            {
+              "name": "가격",
+              "price": 23900,
+              "discountPrice": 0
+            },
+            {
+              "name": "봄동비빔밥 1개",
+              "price": 0,
+              "discountPrice": 0
+            },
+            {
+              "name": "푸딩계란찜Ri뷰약속",
+              "price": 1000,
+              "discountPrice": 0
+            },
+            {
+              "name": "1단계) 매운고춧가루 1스푼 (신라면 보다 좀 더 매운맛)",
+              "price": 300,
+              "discountPrice": 0
+            }
+          ]
+        }
+      ],
+      "deliveryTip": null,
+      "smallOrderFee": null,
+      "employeeDiscountAmount": null,
+      "ownerChargeCouponDiscountAmount": null,
+      "baeminChargeCouponDiscountAmount": null,
+      "adCampaign": {
+        "id": "12915198",
+        "key": "BAEMIN_1_PLUS",
+        "baeminClubMemberShip": false
+      },
+      "deliveryCarryType": "SINGLE",
+      "flexibleDeliveryCarryType": "SINGLE",
+      "serviceType": "FOOD",
+      "tags": [
+        "ORDER_SHEET_PLATFORM_V3",
+        "SPOON_FORK",
+        "RELAY_LAAS",
+        "RELAY_LAAS_PARTIAL_CANCEL",
+        "REUSABLE_CONTAINER_SHOP"
+      ],
+      "orderInstantDiscountAmount": 3000,
+      "totalInstantDiscountAmount": 4000,
+      "instantDiscounts": [
+        {
+          "id": "1837596",
+          "bucketType": "ORDER",
+          "policyType": "ALL_ORDER",
+          "amount": 2000,
+          "isBaeminClubDiscount": false,
+          "distributions": [
+            {
+              "distributionType": "SHOP",
+              "amount": 2000
+            }
+          ],
+          "promotion": false
+        },
+        {
+          "id": "2031023",
+          "bucketType": "ORDER",
+          "policyType": "ALL_ORDER",
+          "amount": 1000,
+          "isBaeminClubDiscount": false,
+          "distributions": [
+            {
+              "distributionType": "WOOWA",
+              "amount": 1000
+            }
+          ],
+          "promotion": true
+        },
+        {
+          "id": "1837580",
+          "bucketType": "DELIVERY",
+          "policyType": "OD_AMOUNT_DISCOUNT",
+          "amount": 1000,
+          "isBaeminClubDiscount": false,
+          "distributions": [
+            {
+              "distributionType": "SHOP",
+              "amount": 1000
+            }
+          ],
+          "promotion": false
+        }
+      ],
+      "instantDiscountApplied": true,
+      "partialCanceled": false,
+      "isPartialCanceled": false
+    },
+    "settle": {
+      "notDisplayReason": null,
+      "orderBrokerageAmount": 23234,
+      "orderBrokerageItems": [
+        {
+          "code": "ORDER_AMOUNT",
+          "name": "주문금액",
+          "amount": 27200,
+          "depth3Items": null
+        },
+        {
+          "code": "ADVERTISE_FEE",
+          "name": "중개이용료",
+          "amount": -1966,
+          "depth3Items": null
+        },
+        {
+          "code": "DISCOUNT_AMOUNT",
+          "name": "고객할인비용",
+          "amount": -2000,
+          "depth3Items": [
+            {
+              "code": "TOTAL_ORDER_IMMEDIATE_DISCOUNT",
+              "name": "주문금액 즉시할인",
+              "amount": -3000
+            },
+            {
+              "code": "WOOWABROS_ORDER_IMMEDIATE_DISCOUNT",
+              "name": "주문금액 즉시할인 지원",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "deliveryItemAmount": -4309,
+      "deliveryItems": [
+        {
+          "code": "DELIVERY_SUPPLY_PRICE",
+          "name": "배달비",
+          "amount": -3400,
+          "depth3Items": null
+        },
+        {
+          "code": "DEVLIERY_TIP_INSTANT_DISCOUNT",
+          "name": "배달팁 할인비용",
+          "amount": -909,
+          "depth3Items": [
+            {
+              "code": "TOTAL_DELIVERY_TIP_IMMEDIATE_DISCOUNT",
+              "name": "배달팁 즉시할인",
+              "amount": -909
+            }
+          ]
+        },
+        {
+          "code": "BAEMIN_CLUB_INSTANT_DISCOUNT",
+          "name": "배민클럽 할인비용",
+          "amount": 0,
+          "depth3Items": []
+        }
+      ],
+      "etcItemAmount": -756,
+      "etcItems": [
+        {
+          "code": "SERVICE_FEE",
+          "name": "결제정산수수료",
+          "amount": -756,
+          "sequence": 1
+        }
+      ],
+      "deductionAmountTotalVat": -704,
+      "meetAmount": null,
+      "depositDueAmount": 17465,
+      "depositDueDate": "2026-03-11",
+      "total": 17465
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "orderId": "D26C08W8UJG",
+  "orderIdInternal": "2603087557935",
+  "orderedAt": "2026-03-08 19:14:11",
+  "orderType": "가게배달",
+  "menuSummary": "[고기왕창] 2~3인 숙성김치찜",
+  "menuAmount": 45300,
+  "settlementAmount": 40800,
+  "totalFee": 4500,
+  "channel": "가게배달",
+  "orderStatus": "COMPLETED"
+}
