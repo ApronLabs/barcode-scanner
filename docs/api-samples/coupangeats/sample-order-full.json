@@ -1,0 +1,98 @@
+{
+  "orderId": "2LS3UW",
+  "orderIdInternal": "973238658888912896",
+  "orderedAt": "2026-03-08T13:40:25.190Z",
+  "orderType": "REGULAR",
+  "menuSummary": "[고기왕창]1인 숙성김치찜",
+  "totalPayment": 17900,
+  "orderStatus": "COMPLETED",
+  "channel": "DELIVERY",
+  "paymentMethod": "",
+  "commissionFee": 1396,
+  "pgFee": 507,
+  "deliveryCost": 3400,
+  "adFee": 0,
+  "vat": 530,
+  "storeDiscount": 0,
+  "instantDiscount": 1000,
+  "cupDeposit": 0,
+  "favorableFee": 0,
+  "settlementAmount": 11067,
+  "settlementDate": "2026-03-12",
+  "isSettled": true,
+  "items": [
+    {
+      "menuName": "[고기왕창]1인 숙성김치찜",
+      "quantity": 1,
+      "unitPrice": 17900,
+      "totalPrice": 17900,
+      "options": [
+        {
+          "name": "돼지고기 김치찜",
+          "quantity": 1,
+          "price": 0
+        },
+        {
+          "name": "0단계) 보통맛",
+          "quantity": 1,
+          "price": 0
+        },
+        {
+          "name": "단품 (밥 X)",
+          "quantity": 1,
+          "price": 0
+        },
+        {
+          "name": "고기추가 Ri뷰 약속",
+          "quantity": 1,
+          "price": 0
+        }
+      ]
+    }
+  ],
+  "orderSettlement": {
+    "commissionTotal": 5833,
+    "commissionVat": 530,
+    "commissionRefundVat": 0,
+    "commissionDiscountSupplyPrice": 0,
+    "commissionDiscountVat": 0,
+    "commissionDiscountRefundSupplyPrice": 0,
+    "commissionDiscountRefundVat": 0,
+    "serviceSupplyPrice": {
+      "basicSupplyPrice": 1396,
+      "appliedSupplyPrice": 1396
+    },
+    "paymentSupplyPrice": {
+      "basicSupplyPrice": 507,
+      "appliedSupplyPrice": 507
+    },
+    "deliverySupplyPrice": {
+      "basicSupplyPrice": 3400,
+      "appliedSupplyPrice": 3400
+    },
+    "serviceRefundSupplyPrice": {
+      "basicSupplyPrice": 0,
+      "appliedSupplyPrice": 0
+    },
+    "paymentRefundSupplyPrice": {
+      "basicSupplyPrice": 0,
+      "appliedSupplyPrice": 0
+    },
+    "deliveryRefundSupplyPrice": {
+      "basicSupplyPrice": 0,
+      "appliedSupplyPrice": 0
+    },
+    "advertisingSupplyPrice": {
+      "basicSupplyPrice": 0,
+      "appliedSupplyPrice": 0
+    },
+    "advertisingCredit": 0,
+    "storePromotionAmount": 0,
+    "favorableFee": 0,
+    "settlementDueDate": "2026-03-12",
+    "hasSettled": true,
+    "disposableCupFee": 0,
+    "mfdTotalAmount": 1000,
+    "subtractAmount": 6833
+  }
+}
