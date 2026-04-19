@@ -330,6 +330,11 @@ function getSelectStoreScript(storeId) {
 // ── 날짜 필터 ──
 function getBackfillDateFilterScript(startDate, endDate) {
   return `(async function() {
+    // v3.9.6: 요기요 alert("시작일과 종료일을 모두 선택해주세요.") 가 Electron executeJavaScript 를
+    // 무한 대기시키는 이슈 방지 + daily 모드(same-day range) 처리 개선을 위해 alert 완전 봉쇄.
+    window.alert = () => {};
+    window.confirm = () => true;
+
     const startDate = ${JSON.stringify(startDate)};
     const endDate = ${JSON.stringify(endDate)};
     const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
@@ -393,6 +398,13 @@ function getBackfillDateFilterScript(startDate, endDate) {
       return false;
     }
 
+    // v3.9.6: 단순 el.click() 은 react-datepicker range 2nd-click 을 무시하는 경우 있음.
+    // mousedown + mouseup + click 3단계 이벤트 dispatch 로 실제 사용자 클릭 재현.
+    function clickDayEl(el) {
+      ['mousedown', 'mouseup', 'click'].forEach(type => {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      });
+    }
     function findAndClickDay(year, month, day) {
       const dayEls = document.querySelectorAll('.react-datepicker__day');
       for (const el of dayEls) {
@@ -401,14 +413,15 @@ function getBackfillDateFilterScript(startDate, endDate) {
         const aria = el.getAttribute('aria-label') || '';
         const n = parseInt(el.innerText?.trim(), 10);
         if (aria.includes(month + '월') && aria.includes(day + '일') && n === day) {
-          el.click(); return true;
+          clickDayEl(el);
+          return true;
         }
       }
       for (const el of dayEls) {
         const cls = el.className || '';
         if (cls.includes('disabled') || cls.includes('outside') || cls.includes('name')) continue;
         const n = parseInt(el.innerText?.trim(), 10);
-        if (n === day && !isNaN(n)) { el.click(); return true; }
+        if (n === day && !isNaN(n)) { clickDayEl(el); return true; }
       }
       return false;
     }
@@ -437,12 +450,26 @@ function getBackfillDateFilterScript(startDate, endDate) {
     }
     await sleep(1000);
 
+    // v3.9.6: 종료일이 실제로 datepicker input 에 반영됐는지 검증.
+    // daily 모드(start==end) 또는 react-datepicker range 재클릭 실패 시 input 이 "YYYY.MM.DD ~ " 로 끝나있음.
+    // 최대 3회까지 재시도 — 종료일을 다시 클릭해서 range 확정.
+    const getInputValue = () => document.querySelector('.react-datepicker__input-container input')?.value || '';
+    for (let retry = 0; retry < 3; retry++) {
+      const v = getInputValue();
+      // 정상 패턴: "2026.04.18 ~ 2026.04.18" — 둘 다 숫자 포함. 종료 없음: "2026.04.18 ~ "
+      const parts = v.split('~').map(s => s.trim());
+      if (parts.length === 2 && parts[1].match(/\\d{4}\\.\\d{2}\\.\\d{2}/)) break;
+      console.log('[intercept] 종료일 재선택 시도 ' + (retry + 1) + ' (현재 input: ' + v + ')');
+      findAndClickDay(endYear, endMonth, endDay);
+      await sleep(800);
+    }
+
     await sleep(500);
     const searchBtn = Array.from(document.querySelectorAll('button'))
       .find(b => b.innerText.trim() === '조회' && b.offsetParent !== null);
     if (searchBtn) { searchBtn.click(); await sleep(3000); }
 
-    return { success: true, startDate, endDate };
+    return { success: true, startDate, endDate, finalInput: getInputValue() };
   })()`;
 }
 
@@ -795,7 +822,7 @@ app.whenReady().then(async () => {
   emit('status', { msg: `요기요 수집 시작 (${config.mode}: ${startDate} ~ ${endDate})` });
   log(`=== 요기요 워커: ${config.mode} (${startDate} ~ ${endDate}) ===`);
 
-  mainWindow = new BrowserWindow({ width: 1200, height: 900, show: false });
+  mainWindow = new BrowserWindow({ width: 1200, height: 900, show: process.argv.includes('--show') });
   mainWindow.loadURL('about:blank');
 
   webView = new WebContentsView({
@@ -957,10 +984,14 @@ app.whenReady().then(async () => {
       // 매핑
       const mapped = allOrders.map(o => mapToSalesOrder(o, settlementMap, store.storeName, store.storeId));
 
-      // 날짜별 그룹핑
+      // 날짜별 그룹핑 — orderedAt 은 "YYYY-MM-DDTHH:mm:ss+09:00" (v3.7.x+ parseYogiyoOrderedAt).
+      // 이전 코드 `split(' ')[0]` 이 ISO 포맷에 대해 split 되지 않아 전체 문자열을 date 로 썼고,
+      // 노심 ingest route 에서 YYYY-MM-DD 포맷 검증 실패 → 400 Bad Request → 요기요 주문 저장 안 됨.
       const dailyGroups = {};
       for (const m of mapped) {
-        const date = (m.orderedAt || '').split(' ')[0] || 'unknown';
+        const raw = (m.orderedAt || '');
+        // ISO: "2026-04-18T..." 또는 레거시 " " 구분 "2026-04-18 12:38:51"
+        const date = (raw.split('T')[0] || raw.split(' ')[0] || '').slice(0, 10) || 'unknown';
         if (!dailyGroups[date]) dailyGroups[date] = [];
         dailyGroups[date].push(m);
       }
