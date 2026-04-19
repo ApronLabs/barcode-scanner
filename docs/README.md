@@ -71,11 +71,31 @@
 - 요기요: ⚠ mapped 만 `sample-order-mapped.json` (raw 재수집 필요)
 - 땡겨요: ⚠ mapped 만 `sample-order-mapped.json`
 
+## Raw JSON 재수집 방법
+
+POC 는 `DUMP_RAW=1` 환경변수 설정 시 raw 응답 샘플 (기본 5건) 을 `docs/api-samples/{platform}/{targetDate}.json` 에 자동 저장합니다.
+
+```bash
+DUMP_RAW=1 npx electron scripts/poc-baemin.js \
+  --id=<아이디> --pw=<비밀번호> \
+  --mode=daily --targetDate=2026-04-19 \
+  --storeId=<매장UUID>
+```
+
+실행 후 결과 파일 예시:
+- `docs/api-samples/baemin/2026-04-19.json`
+- `docs/api-samples/coupangeats/2026-04-19.json`
+- `docs/api-samples/yogiyo/2026-04-19.json` (주문 + 정산 모달 응답 쌍)
+- `docs/api-samples/ddangyoyo/2026-04-19.json`
+
+구현: [`scripts/lib/raw-dumper.js`](../scripts/lib/raw-dumper.js)
+
+**민감정보 주의**: 커밋 전에 샘플 JSON 에서 매장명·전화번호·주소가 있다면 redact.
+
 ## 후속 작업
 
-- [ ] POC 에 `DUMP_RAW=1` 환경변수 지원 추가 → 설정 시 `docs/api-samples/{platform}/{YYYY-MM-DD}.json` 자동 저장
-- [ ] 요기요/땡겨요 raw JSON 수집 후 커밋
-- [ ] 각 플랫폼 문서의 `checkVerificationWorkflow` 실제 실행해 결과 기록
-- [ ] 쿠팡이츠 `sale_price` 정의 `totalPayment` → `totalAmount` 로 변경
-- [ ] 땡겨요 정산명세서 페이지 API 엔드포인트 캡처
+- [ ] 요기요/땡겨요 raw JSON 수집 후 커밋 (DUMP_RAW=1 로 실행)
+- [ ] 각 플랫폼 문서의 검증 워크플로우 실제 실행 — 주문 1건씩 DB vs 사이트 대조
+- [ ] 쿠팡이츠 `sale_price` 정의 확정 (실측 대조 후 — `totalPayment` 유지 가능성 높음)
+- [ ] 땡겨요 정산명세서 페이지 API 엔드포인트 캡처 (수수료 breakdown 확보)
 - [ ] 요기요 페이지네이션 누락 이슈 규명

@@ -7,7 +7,9 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { RawDumper } = require('./lib/raw-dumper');
 const POC_VERSION = app.getVersion() || 'unknown';
+const rawDumper = new RawDumper('coupangeats');
 
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process');
@@ -413,6 +415,9 @@ async function collectStore(name, id, dr) {
 
   log(`   총 수신: ${allOrders.length}건`);
 
+  // DUMP_RAW=1 시 raw 응답 샘플 수집
+  for (const o of allOrders) rawDumper.add(o);
+
   // API 응답 → 통일 포맷 변환 + 날짜별 그룹핑
   const converted = allOrders.map(o => {
     const dateStr = msToKstDate(o.createdAt);
@@ -664,6 +669,8 @@ app.whenReady().then(async () => {
         apiSummary: r.apiSummary,
       })),
     });
+
+    rawDumper.flush(config.targetDate || new Date().toISOString().slice(0, 10), { mode: config.mode });
 
     log('\n=== 쿠팡이츠 워커 완료 ===');
     emit('done', {});
