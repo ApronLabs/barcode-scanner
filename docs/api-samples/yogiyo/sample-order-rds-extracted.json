@@ -1,0 +1,251 @@
+{
+  "source": "rds crawler_orders.raw_data",
+  "order_id": "F2603091457JZ23B",
+  "order_date": "2026-03-09",
+  "sale_price": 51700,
+  "settlement_amount": 47282,
+  "note": "POC가 ingest 시 payload 로 전송 → nosim이 raw_data JSONB에 저장한 값",
+  "raw_data": {
+    "vat": 0,
+    "items": [
+      {
+        "menuName": "[고기왕창] 2~3인 숙성김치찜",
+        "quantity": 1
+      },
+      {
+        "menuName": "[고기왕창] 1인 숙성김치찜",
+        "quantity": 1
+      }
+    ],
+    "pgFee": 1802,
+    "adCost": 0,
+    "channel": "배달",
+    "orderId": "F2603091457JZ23B",
+    "storeId": "1199784",
+    "orderType": "YGY_FOOD",
+    "orderedAt": "2026-03-09 14:57:55",
+    "storeName": "고기왕김치찜-정릉점",
+    "menuAmount": 51700,
+    "orderPrice": 54600,
+    "menuSummary": "[고기왕창] 2~3인 숙성김치찜 외 1건",
+    "orderStatus": "DELIVERED",
+    "deliveryCost": 0,
+    "commissionFee": 5516,
+    "paymentMethod": "온라인결제",
+    "rawSettlement": {
+      "items": [
+        {
+          "name": "[고기왕창] 2~3인 숙성김치찜",
+          "options": [
+            {
+              "name": "돼지고기 김치찜",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "0단계. 보통맛",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "단품 (밥 X)",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "김치찜용 김치 추가",
+              "quantity": 1,
+              "unit_price": 3000,
+              "option_type": null,
+              "total_price": 3000
+            },
+            {
+              "name": "스팸추가 Ri뷰 약속",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            }
+          ],
+          "quantity": 1,
+          "discounts": [],
+          "image_url": "https://images.yogiyo.co.kr/image/yogiyo/REST_OWNER_IMG/OWNERS/1199784/20230414_102909_blob?width=1080&height=640&quality=70",
+          "item_type": null,
+          "unit_price": 27800,
+          "total_price": 27800
+        },
+        {
+          "name": "[고기왕창] 1인 숙성김치찜",
+          "options": [
+            {
+              "name": "돼지고기 김치찜",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "0단계. 보통맛",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "단품 (밥 X)",
+              "quantity": 1,
+              "unit_price": 0,
+              "option_type": null,
+              "total_price": 0
+            },
+            {
+              "name": "김치찜용 김치 추가",
+              "quantity": 1,
+              "unit_price": 3000,
+              "option_type": null,
+              "total_price": 3000
+            },
+            {
+              "name": "푸딩계란찜Ri뷰약속",
+              "quantity": 1,
+              "unit_price": 1000,
+              "option_type": null,
+              "total_price": 1000
+            }
+          ],
+          "quantity": 1,
+          "discounts": [],
+          "image_url": "https://images.yogiyo.co.kr/image/yogiyo/REST_OWNER_IMG/OWNERS/1199784/20230414_102830_blob?width=1080&height=640&quality=70",
+          "item_type": null,
+          "unit_price": 16900,
+          "total_price": 16900
+        }
+      ],
+      "vendor": {
+        "name": "고기왕김치찜-정릉점",
+        "vendor_id": "1199784",
+        "vendor_type": "YGY_FOOD",
+        "franchise_id": null,
+        "phone_number": "0260800011",
+        "restaurant_id": 1199784,
+        "company_number": "217-28-01090"
+      },
+      "payment": {
+        "price": 53993,
+        "payment_no": "20260309145740354881",
+        "sub_payments": [
+          {
+            "name": "포인트",
+            "price": 607,
+            "payment_method": "POINT",
+            "payment_service": "YGY"
+          }
+        ],
+        "payment_method": "POINT",
+        "payment_service": "KAKAOPAY",
+        "central_payment_type": "ONLINE"
+      },
+      "customer": {
+        "id": 653499707,
+        "email": "cute565@naver.com",
+        "phone": "01026571235",
+        "address": {
+          "road_name": "서울특별시 종로구 평창30길 60",
+          "street_name": "서울특별시 종로구 평창동 483-1",
+          "street_number": "1층"
+        },
+        "comment": "수저, 포크 O",
+        "user_id": 32983771,
+        "location": {
+          "lat": "37.612969758162",
+          "lng": "126.972962977797"
+        },
+        "user_name": "모카",
+        "safen_number": "050448124611",
+        "comment_to_vendor": "",
+        "is_cutlery_requested": true
+      },
+      "platform": "YGY",
+      "discounts": [],
+      "accepted_at": "2026-03-09 14:58:37",
+      "cancel_info": null,
+      "items_count": 2,
+      "items_price": 51700,
+      "pickup_info": null,
+      "delivery_fee": 2900,
+      "order_number": "F2603091457JZ23B",
+      "order_status": "SUCCESS",
+      "submitted_at": "2026-03-09 14:57:55",
+      "delivery_info": {
+        "modified_at": "2026-03-09 15:27:05",
+        "arrived_time": null,
+        "delivery_time": "2026-03-09 15:28:37",
+        "delivered_time": "2026-03-09 15:27:05",
+        "logistics_info": null,
+        "comment_to_rider": "",
+        "rider_tracking_info": {
+          "status": "DELIVERED",
+          "rider_name": null,
+          "modified_at": "2026-03-09 15:27:05",
+          "vehicle_type": "MOTORBIKE",
+          "rider_comment": null,
+          "rider_image_url": null,
+          "rider_pickup_time": "2026-03-09 15:13:19",
+          "delivered_image_url": null
+        },
+        "delivery_method_code": "VD",
+        "delivery_serving_type": null,
+        "is_contactless_delivery": true
+      },
+      "previsit_info": null,
+      "tax_free_price": 0,
+      "settlement_info": {
+        "message": "",
+        "adjusted": false,
+        "payment_date": "2026-03-15T15:00:00.000Z",
+        "partial_canceled": false,
+        "settlement_items": [
+          {
+            "item_title": "주문금액",
+            "item_amount": 51700
+          },
+          {
+            "item_title": "배달요금",
+            "item_amount": 2900
+          },
+          {
+            "item_title": "주문중개 이용료",
+            "item_amount": -5516
+          },
+          {
+            "item_title": "외부결제 이용료",
+            "item_amount": -1802
+          }
+        ],
+        "only_show_message": false,
+        "settlement_amount": 47282,
+        "yogiyo_discount_amount": 607
+      },
+      "delivery_fee_info": {
+        "base_delivery_fee": 2900,
+        "adjusted_delivery_fee": 2900,
+        "delivery_fee_discount": 0
+      },
+      "order_description": "[고기왕창] 2~3인 숙성김치찜 x 1 외 1 건",
+      "extra_payment_price": 0,
+      "transmission_status": "DELIVERED",
+      "purchase_serving_type": "DELIVERY"
+    },
+    "deliveryIncome": 2900,
+    "sellerDiscount": 0,
+    "settlementDate": "2026-03-15T15:00:00.000Z",
+    "platformSubsidy": 607,
+    "settlementAmount": 47282
+  }
+}
