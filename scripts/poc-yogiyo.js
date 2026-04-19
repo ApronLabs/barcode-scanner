@@ -7,7 +7,9 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { RawDumper } = require('./lib/raw-dumper');
 const POC_VERSION = app.getVersion() || 'unknown';
+const rawDumper = new RawDumper('yogiyo');
 
 // Electron 자동화 감지 비활성화
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
@@ -946,6 +948,11 @@ app.whenReady().then(async () => {
       const orderNumbers = allOrders.map(o => o.order_number).filter(Boolean);
       const settlementMap = await collectSettlements(orderNumbers);
 
+      // DUMP_RAW=1 시 raw 응답 샘플 수집 (주문 + 매칭되는 정산 정보)
+      for (const o of allOrders) {
+        rawDumper.add({ order: o, settlement: settlementMap.get(o.order_number) ?? null });
+      }
+
       // 매핑
       const mapped = allOrders.map(o => mapToSalesOrder(o, settlementMap, store.storeName, store.storeId));
 
@@ -1002,6 +1009,8 @@ app.whenReady().then(async () => {
         totalOrders: s.totalOrders || 0,
       })),
     });
+
+    rawDumper.flush(config.targetDate || new Date().toISOString().slice(0, 10), { mode: config.mode });
 
     log('\n=== 요기요 워커 완료 ===');
     emit('done', {});

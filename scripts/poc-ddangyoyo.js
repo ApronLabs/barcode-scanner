@@ -7,7 +7,9 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { RawDumper } = require('./lib/raw-dumper');
 const POC_VERSION = app.getVersion() || 'unknown';
+const rawDumper = new RawDumper('ddangyoyo');
 
 // Electron 자동화 감지 비활성화
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
@@ -184,6 +186,7 @@ function parseDateTime(setlDt, setlTm) {
 }
 
 function mapToSalesOrder(order, storeName) {
+  rawDumper.add(order);
   const menuNm = (order.menu_nm || '').trim();
   const saleAmt = parseAmount(order.sale_amt);
   const settlAmt = parseAmount(order.tot_setl_amt);
@@ -792,6 +795,8 @@ app.whenReady().then(async () => {
         };
       }),
     });
+
+    rawDumper.flush(config.targetDate || new Date().toISOString().slice(0, 10), { mode: config.mode });
 
     log(`전체 합계: ${Object.keys(allStoreResults).length}매장 / ${grandOrders}건 / 매출:${grandSale.toLocaleString()} / 정산:${grandSettl.toLocaleString()}`);
     log('=== 땡겨요 워커 완료 ===');

@@ -7,8 +7,10 @@
 const { app, BrowserWindow, WebContentsView } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { RawDumper } = require('./lib/raw-dumper');
 
 const POC_VERSION = app.getVersion() || 'unknown';
+const rawDumper = new RawDumper('baemin');
 
 // ── CLI 인자 파싱 ──
 function getArg(name) {
@@ -382,6 +384,7 @@ function fetchViaWebview(apiUrl) {
 //   - *FeeVat: 공급가 비례분배 (배민은 deductionAmountTotalVat 합계만 제공)
 // 원본은 rawItem 에 보존 — 필요 시 노심 백필이 재추출 가능.
 function mapOrder(item) {
+  rawDumper.add(item);
   const o = item.order, s = item.settle;
   const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount ?? 0;
 
@@ -919,6 +922,8 @@ app.whenReady().then(async () => {
         totals: s.totals,
       })),
     });
+
+    rawDumper.flush(config.targetDate || endDate, { mode: config.mode });
 
     log('\n=== 배민 워커 완료 ===');
     emit('done', {});

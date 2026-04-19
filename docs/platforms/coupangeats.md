@@ -91,10 +91,13 @@ orderSettlement: {
 - `mfdTotalAmount`: 즉시할인 (쿠팡부담 + 매장부담 합)
 - 매장부담 할인은 `storePromotionAmount` 에 별도 (배민 `DISCOUNT_AMOUNT` 와 동일 의미)
 
-### `sale_price` 정의 불일치 (⚠ 후속 수정 필요)
-- 현재 ingest route가 `sale_price: order.totalPayment` (결제금액) 저장 중.
-- 배민 v3.9.2 와 동일 원칙 적용하려면 `totalAmount` (할인 전) 로 바꿔야 함.
-- 다음 PR 범위.
+### `sale_price` 정의 — 현재 상태 유지 권장
+- 현재 `sale_price = totalPayment` 저장 (결제금액).
+- 쿠팡이츠는 배민과 다르게 **"주문금액 = 결제금액"** 이 자연스러운 구조.
+  - `mfdTotalAmount` (즉시할인) 은 **쿠팡이 부담**하는 프로모션 → 매장 매출엔 영향 없이 정산에서만 차감.
+  - 배민의 "주문금액 (할인 전)" 개념이 쿠팡에 직접 대응 안 됨.
+- 2026-04-19 실측: 고기왕 주문 03U8VA — `totalPayment 186,500 = 공급가합 32,858 + VAT 3,286 + 즉시할인 1,000 + 정산 149,356` ✓
+- 사장님이 쿠팡이츠 정산명세서와 대조해 "주문금액" 필드가 `totalPayment` 와 다르면 그때 재검토.
 
 ### 쿠팡부담 쿠폰
 - 쿠팡 UI/API 어디에도 "쿠팡부담 쿠폰" 명시 필드 없음.
