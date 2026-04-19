@@ -949,8 +949,9 @@ app.whenReady().then(async () => {
       const settlementMap = await collectSettlements(orderNumbers);
 
       // DUMP_RAW=1 시 raw 응답 샘플 수집 (주문 + 매칭되는 정산 정보)
+      // settlementMap 은 plain object — `.get()` 아닌 index 접근 (line 775 collectSettlements 반환)
       for (const o of allOrders) {
-        rawDumper.add({ order: o, settlement: settlementMap.get(o.order_number) ?? null });
+        rawDumper.add({ order: o, settlement: settlementMap[o.order_number] ?? null });
       }
 
       // 매핑
