@@ -1,0 +1,38 @@
+{
+  "source": "rds crawler_orders.raw_data",
+  "order_id": "03U8VA",
+  "order_date": "2026-03-03",
+  "sale_price": 186500,
+  "settlement_amount": 149356,
+  "note": "POC가 ingest 시 payload 로 전송 → nosim이 raw_data JSONB에 저장한 값",
+  "raw_data": {
+    "orderId": "03U8VA",
+    "orderType": "COMPLETED",
+    "orderedAt": "2026-03-03T20:24:00+09:00",
+    "menuSummary": "[고기왕창]2~3인 숙성김치찜 x5, 푸딩계란찜 x5",
+    "totalAmount": 185500,
+    "totalPayment": 186500,
+    "orderSettlement": {
+      "hasSettled": true,
+      "favorableFee": 0,
+      "commissionVat": 3286,
+      "mfdTotalAmount": 1000,
+      "subtractAmount": 37144,
+      "commissionTotal": 36144,
+      "settlementDueDate": "2026-03-09",
+      "paymentSupplyPrice": {
+        "appliedSupplyPrice": 5586
+      },
+      "serviceSupplyPrice": {
+        "appliedSupplyPrice": 14547
+      },
+      "deliverySupplyPrice": {
+        "appliedSupplyPrice": 3400
+      },
+      "storePromotionAmount": 0,
+      "advertisingSupplyPrice": {
+        "appliedSupplyPrice": 9325
+      }
+    }
+  }
+}

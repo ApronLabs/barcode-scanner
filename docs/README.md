@@ -65,11 +65,22 @@
 
 `api-samples/{platform}/` 에 플랫폼별 1~2건 커밋. 새 버전 POC 릴리스 전에 업데이트 권장.
 
-현재 상태:
-- 배민: ✅ rawData (order + settle) 포함 `sample-order-full.json`
-- 쿠팡이츠: ✅ orderSettlement 포함 `sample-order-full.json`
-- 요기요: ⚠ mapped 만 `sample-order-mapped.json` (raw 재수집 필요)
-- 땡겨요: ⚠ mapped 만 `sample-order-mapped.json`
+현재 상태 (2026-04-19):
+- 배민: ✅ `sample-order-full.json` (rawData order + settle 포함)
+- 쿠팡이츠: ✅ `sample-order-rds-extracted.json` (orderSettlement 전개)
+- 요기요: ✅ `sample-order-rds-extracted.json` (rawSettlement + items + 계산필드)
+- 땡겨요: ✅ `sample-order-rds-extracted.json` (rawOrder 21필드 전개)
+
+**샘플 추출 방법 2가지**:
+1. **RDS 에서** (zero-config, 이미 `crawler_orders.raw_data` 에 POC payload 저장중):
+   ```sql
+   SELECT row_to_json(x) FROM (
+     SELECT order_id, raw_data FROM crawler_orders
+     WHERE store_id='...' AND platform='...' LIMIT 1
+   ) x;
+   ```
+2. **DUMP_RAW=1 로컬 실행** (fresh raw, POC 진입 시점에 수집):
+   아래 "Raw JSON 재수집 방법" 섹션 참조
 
 ## Raw JSON 재수집 방법
 
