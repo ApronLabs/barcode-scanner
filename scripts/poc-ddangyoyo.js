@@ -192,6 +192,9 @@ function mapToSalesOrder(order, storeName) {
   const settlAmt = parseAmount(order.tot_setl_amt);
   const orderedAt = parseDateTime(order.setl_dt, order.setl_tm);
 
+  // v3.9.7+: attachSettlementToOrders 로 _settlement 가 세팅됐으면 해당 값 사용
+  const s = order._settlement || {};
+
   return {
     orderId: order.ord_id || '',
     orderIdInternal: order.ord_no || '',
@@ -206,10 +209,165 @@ function mapToSalesOrder(order, storeName) {
     isRegularCustomer: order.regl_cust_yn === 'Y',
     storeName: storeName,
     items: [],
-    // 탐사용: 땡겨요 API raw 응답 보존. 수수료 필드(ord_medi_amt/setl_ajst_amt/
-    // delv_agnt_amt 등) spec 확인 후 다음 버전에서 매핑 구현.
+    // v3.9.7+: 정산상세 API 기반 수수료 비례분배 (paym_plan_dt 그룹 × sale_amt 비율)
+    commissionFee: s.commissionFee ?? 0,
+    pgFee: s.pgFee ?? 0,
+    deliveryFee: s.deliveryFee ?? 0,
+    storeDiscount: s.storeDiscount ?? 0,
+    platformSubsidy: s.platformSubsidy ?? 0,
+    paymPlanDt: order._paymPlanDt ?? null,
     rawOrder: order,
   };
+}
+
+// ── 정산상세 수집 (v3.9.7+) ──
+// 1) requestImdtlPaymAmt 로 입금 완료된 paym_plan_dt 리스트
+// 2) 각각 requestQryCalculateDetail 로 dlt_ajst (수수료 합) + dlt_amtList (주문별 입금액)
+async function collectSettlementDetails(view, patstoNo, startDateCompact, endDateCompact) {
+  const headers = {
+    'Content-Type': 'application/json;charset=UTF-8',
+    'Accept': 'application/json, text/plain, */*',
+  };
+  const bizRegNo = '2172801090'; // TODO: 매장별로 다를 수 있으나 현재 1 매장만 지원
+
+  // Step 1: 입금일 리스트
+  const listBody = JSON.stringify({
+    dma_para: [{
+      patsto_no: patstoNo,
+      biz_reg_no: bizRegNo,
+      sotid: '0000',
+      inq_st_dt: startDateCompact,
+      inq_ed_dt: endDateCompact,
+      page_num: 1,
+      page_row_cnt: 100,
+      rowStatus: 'R',
+    }],
+  });
+
+  const listRes = await view.webContents.executeJavaScript(`(async function() {
+    try {
+      const r = await fetch('https://boss.ddangyo.com/o2o/shop/pu/requestImdtlPaymAmt', {
+        method: 'POST', headers: ${JSON.stringify(headers)},
+        credentials: 'include', body: ${JSON.stringify(listBody)},
+      });
+      return { ok: r.ok, status: r.status, data: await r.json() };
+    } catch (e) { return { ok: false, error: e.message }; }
+  })()`);
+
+  if (!listRes.ok) {
+    log(`   정산 리스트 조회 실패: ${listRes.error || listRes.status}`);
+    return [];
+  }
+  const paymPlans = (listRes.data?.dlt_data_result_list || [])
+    .filter(p => p.wtran_rslt_cd === '0000'); // 입금완료
+  log(`   입금완료 paym_plan_dt: ${paymPlans.length}건`);
+
+  // Step 2: 각 paym_plan_dt 상세
+  const details = [];
+  for (const plan of paymPlans) {
+    const detailBody = JSON.stringify({
+      dlt_param_req: [{
+        paym_plan_dt: plan.paym_plan_dt,
+        ajst_div_cd: plan.ajst_div_cd || '001',
+        paym_plan_no: plan.paym_plan_no || '',
+        tab_gubun: '',
+        patsto_no: patstoNo,
+        paym_div_cd: '',
+        wtran_rslt_cd: '0000',
+        rowStatus: 'R',
+      }],
+    });
+    const detailRes = await view.webContents.executeJavaScript(`(async function() {
+      try {
+        const r = await fetch('https://boss.ddangyo.com/o2o/shop/pu/requestQryCalculateDetail', {
+          method: 'POST', headers: ${JSON.stringify(headers)},
+          credentials: 'include', body: ${JSON.stringify(detailBody)},
+        });
+        return { ok: r.ok, status: r.status, data: await r.json() };
+      } catch (e) { return { ok: false, error: e.message }; }
+    })()`);
+
+    if (!detailRes.ok) continue;
+    const ajst = detailRes.data?.dlt_ajst || null;
+    const rows = detailRes.data?.dlt_amtList || [];
+    if (ajst) {
+      details.push({
+        paymPlanDt: plan.paym_plan_dt,
+        ajst,
+        rows,
+      });
+    }
+    await sleep(400); // rate-limit
+  }
+  log(`   정산상세 수집: ${details.length}건`);
+  return details;
+}
+
+// 주문에 비례분배 적용: 매칭된 paym_plan_dt 그룹별 sale_amt 비율
+function attachSettlementToOrders(orders, settlementDetails) {
+  // Step 1: 매칭 — dlt_amtList row 는 단건 주문이 아닌 "해당 paym_plan_dt 의 setl_dt 별 집계".
+  // setl_dt 단위로 paym_plan_dt 귀속.
+  //
+  // 한 setl_dt 에 여러 row (일반/조정 등) 일 수 있으므로 paym_amt 합 검증:
+  //   설 정산 row 들의 paym_amt 합 == 주문들 tot_setl_amt 합 이면 매칭.
+  //   일치 안 해도 setl_dt 기반 1차 매칭은 시도 (부분 정산 허용).
+  for (const detail of settlementDetails) {
+    const setlDtSet = new Set(detail.rows.map(r => r.setl_dt).filter(Boolean));
+    for (const o of orders) {
+      if (o._paymPlanDt) continue;
+      if (setlDtSet.has(o.setl_dt)) o._paymPlanDt = detail.paymPlanDt;
+    }
+  }
+
+  // Step 2: paym_plan_dt 별 그룹화
+  const groups = {};
+  for (const o of orders) {
+    if (!o._paymPlanDt) continue;
+    const key = o._paymPlanDt;
+    if (!groups[key]) {
+      const detail = settlementDetails.find(d => d.paymPlanDt === key);
+      groups[key] = { ajst: detail?.ajst || null, orders: [] };
+    }
+    groups[key].orders.push(o);
+  }
+
+  // Step 3: 비례분배 (sale_amt 비율, 마지막 주문에 잔차)
+  for (const [paymPlanDt, grp] of Object.entries(groups)) {
+    if (!grp.ajst || !grp.orders.length) continue;
+    const totalSale = grp.orders.reduce((a, o) => a + parseAmount(o.sale_amt), 0);
+    if (totalSale === 0) continue;
+
+    const ajst = grp.ajst;
+    const totals = {
+      commission: Math.abs(ajst.ord_medi_amt || 0),
+      pg: Math.abs(ajst.setl_ajst_amt || 0),
+      delivery: Math.abs(ajst.delv_agnt_amt || 0),
+      storeDiscount: Math.abs(ajst.patsto_coup_amt || 0),
+      platformSubsidy: Math.abs(ajst.plfm_coup_amt || 0),
+    };
+    const alloc = { commission: 0, pg: 0, delivery: 0, storeDiscount: 0, platformSubsidy: 0 };
+
+    for (let i = 0; i < grp.orders.length; i++) {
+      const o = grp.orders[i];
+      const isLast = i === grp.orders.length - 1;
+      const ratio = parseAmount(o.sale_amt) / totalSale;
+      const dist = (key) => isLast ? totals[key] - alloc[key] : Math.round(totals[key] * ratio);
+
+      const commission = dist('commission');
+      const pg = dist('pg');
+      const delivery = dist('delivery');
+      const storeDiscount = dist('storeDiscount');
+      const platformSubsidy = dist('platformSubsidy');
+
+      o._settlement = { commissionFee: commission, pgFee: pg, deliveryFee: delivery, storeDiscount, platformSubsidy };
+      alloc.commission += commission; alloc.pg += pg; alloc.delivery += delivery;
+      alloc.storeDiscount += storeDiscount; alloc.platformSubsidy += platformSubsidy;
+    }
+  }
+
+  // Step 4: 통계
+  const matched = orders.filter(o => o._paymPlanDt).length;
+  log(`   주문 비례분배: ${matched}/${orders.length}건 매칭 (매칭 안 된 주문은 수수료 0 유지)`);
 }
 
 // ── 메인 ──
@@ -702,6 +860,21 @@ app.whenReady().then(async () => {
         const candidates = ['ord_medi_amt', 'setl_ajst_amt', 'delv_agnt_amt', 'delvfee_amt', 'patstos_coup_amt', 'medi_amt', 'ajst_amt', 'coup_amt', 'medi_use_fee', 'setl_fee'];
         const found = candidates.filter(k => k in sample).map(k => `${k}=${sample[k]}`);
         if (found.length) log(`   [탐사] 수수료 후보 필드: ${found.join(' / ')}`);
+      }
+
+      // v3.9.7+: 정산상세 API 호출 → 주문별 수수료 비례분배
+      log(`  정산상세 수집 시작 (${dates.startDateCompact} ~ ${dates.endDateCompact})`);
+      try {
+        const settlementDetails = await collectSettlementDetails(
+          view, store.value, dates.startDateCompact, dates.endDateCompact,
+        );
+        if (settlementDetails.length > 0) {
+          attachSettlementToOrders(allOrders, settlementDetails);
+        } else {
+          log(`   정산상세 없음 (D+3~7 지연, 또는 입금완료 row 0)`);
+        }
+      } catch (e) {
+        log(`   정산상세 수집 실패: ${e.message}`);
       }
 
       // 날짜별 그룹핑
