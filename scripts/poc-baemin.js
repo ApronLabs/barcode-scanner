@@ -588,6 +588,29 @@ app.whenReady().then(async () => {
   const [w, h] = mainWindow.getContentSize();
   webView.setBounds({ x: 0, y: 0, width: w, height: h });
 
+  // ── UA 마스킹 + webdriver 플래그 제거 ──
+  // 배민이 Electron UA("...Electron/40.x Safari/537.36") 문자열로 봇 감지하는 것으로 보임.
+  // 쿠팡이츠/땡겨요 POC 와 동일 패턴.
+  const chromeUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  webView.webContents.session.setUserAgent(chromeUA);
+  webView.webContents.setUserAgent(chromeUA);
+  webView.webContents.on('dom-ready', () => {
+    webView.webContents.executeJavaScript(`
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      delete window.process; delete window.require;
+      delete window.__electron_webpack; delete window.__electronLog;
+      delete window.Buffer; delete window.global;
+      if (!window.chrome) {
+        window.chrome = {
+          app: { isInstalled: false },
+          runtime: { id: undefined, connect: function(){}, sendMessage: function(){} },
+          loadTimes: function(){ return {}; }, csi: function(){ return {}; },
+        };
+      }
+      Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] });
+    `).catch(() => {});
+  });
+
   webView.webContents.on('console-message', (_, level, msg) => {
     if (msg.includes('[intercept]') || msg.includes('[baemin-filter]')) log(`  ${msg}`);
   });
@@ -606,14 +629,6 @@ app.whenReady().then(async () => {
       log(`   자동 로그인: ${JSON.stringify(loginResult)}`);
       await waitForLoginRedirect(15000);
       await sleep(2000);
-
-      url = webView.webContents.getURL();
-      if (isLoginUrl(url)) {
-        log('   자동 로그인 실패 -> 수동 대기 (60초)');
-        mainWindow.show();
-        await waitForLoginRedirect(60000);
-        await sleep(2000);
-      }
     }
 
     url = webView.webContents.getURL();
