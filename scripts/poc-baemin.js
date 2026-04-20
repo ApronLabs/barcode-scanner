@@ -424,7 +424,10 @@ function mapOrder(item) {
     // 주문금액 — 할인 전. 배민 정산서 "총매출"과 일치.
     menuAmount: saleAmount,
     deliveryTip: o.deliveryTip || 0,
-    instantDiscount: o.totalInstantDiscountAmount || 0,
+    // v3.9.8+: instantDiscount 필드 제거.
+    // 과거 totalInstantDiscountAmount(고객 관점 GROSS) 를 함께 보내서 노심 엑셀에서
+    // storeDiscount + instantDiscount 이중 집계되는 버그가 있었음. storeDiscount 만으로 충분.
+    instantDiscount: 0,
     // 고객할인비용 — 매장 순부담 (DISCOUNT_AMOUNT depth3 합산된 net 값)
     storeDiscount,
     ownerCouponDiscount: o.ownerChargeCouponDiscountAmount || 0,
