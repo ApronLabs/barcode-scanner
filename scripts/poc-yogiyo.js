@@ -832,6 +832,11 @@ app.whenReady().then(async () => {
   const [w, h] = mainWindow.getContentSize();
   webView.setBounds({ x: 0, y: 0, width: w, height: h });
 
+  // ── UA 마스킹 — Electron UA 노출 시 봇 감지 트리거 가능 ──
+  const chromeUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  webView.webContents.session.setUserAgent(chromeUA);
+  webView.webContents.setUserAgent(chromeUA);
+
   webView.webContents.on('dom-ready', () => {
     webView.webContents.executeJavaScript(`
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
@@ -864,12 +869,6 @@ app.whenReady().then(async () => {
     }
 
     url = webView.webContents.getURL();
-    if (isLoginUrl(url)) {
-      log('   자동 로그인 실패 -> 수동 대기 (60초)');
-      await waitForLoginRedirect(60000);
-      await sleep(2000);
-      url = webView.webContents.getURL();
-    }
     if (isLoginUrl(url)) {
       emit('error', { error: '요기요 로그인 실패' });
       throw new Error('요기요 로그인 실패');
