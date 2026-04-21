@@ -40,10 +40,7 @@ const loginBtn = document.getElementById('loginBtn');
 const errorMsg = document.getElementById('errorMsg');
 const rememberCheck = document.getElementById('rememberCheck');
 
-// 앱 버전 표시
-api.getAppVersion().then(v => {
-  document.getElementById('appVersion').textContent = `v${v}`;
-}).catch(() => {});
+// 앱 버전 표시는 renderer/js/version-display.js 공통 모듈이 처리.
 
 function showError(msg) {
   errorMsg.textContent = msg;
