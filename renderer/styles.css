@@ -36,6 +36,20 @@ body.output-mode {
   font-size: 14px;
 }
 
+/* 앱 버전 배지 — 로그인 이후 페이지에서도 버전 확인 가능하도록 표시. */
+.version-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #9ca3af;
+  background: rgba(156, 163, 175, 0.1);
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
 /* Card */
 .card {
   background: #252540;
