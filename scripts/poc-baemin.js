@@ -175,6 +175,8 @@ async function sendToSalesKeeper(platform, targetDate, shopId, shopName, orders)
     // v3.5.8: 쿠폰 할인 분리
     ownerCouponDiscount: o.ownerCouponDiscount || 0,
     platformSubsidy: o.platformSubsidy || 0,
+    // v3.10.0: 배민 타임세일 분담분 ("주문금액 즉시할인 지원", DISCOUNT_AMOUNT.depth3Items)
+    platformInstantSubsidy: o.platformInstantSubsidy || 0,
     vat: o.vat || 0,
     smallOrderFee: 0,
     cupDeposit: 0,
@@ -387,6 +389,13 @@ function mapOrder(item) {
   rawDumper.add(item);
   const o = item.order, s = item.settle;
   const findCode = (items, code) => (items || []).find(i => i.code === code)?.amount ?? 0;
+  // v3.10.0+: depth3Items 에서 특정 subCode 의 amount 추출.
+  // 예: orderBrokerageItems 의 DISCOUNT_AMOUNT > depth3Items > WOOWABROS_ORDER_IMMEDIATE_DISCOUNT
+  const findDepth3 = (items, parentCode, subCode) => {
+    const parent = (items || []).find(i => i.code === parentCode);
+    if (!parent || !Array.isArray(parent.depth3Items)) return 0;
+    return parent.depth3Items.find(i => i.code === subCode)?.amount ?? 0;
+  };
 
   // orderedAt KST suffix (v3.5.8 유지)
   let orderedAt = o.orderDateTime || '';
@@ -397,6 +406,14 @@ function mapOrder(item) {
   // 공급가 (모두 양수로 정규화)
   const saleAmount = findCode(s?.orderBrokerageItems, 'ORDER_AMOUNT') || o.payAmount || 0;
   const storeDiscount = Math.abs(findCode(s?.orderBrokerageItems, 'DISCOUNT_AMOUNT'));
+  // v3.10.0+: "주문금액 즉시할인 지원" (타임세일 배민분담). DISCOUNT_AMOUNT.depth3Items 중
+  // WOOWABROS_ORDER_IMMEDIATE_DISCOUNT code 가 양수로 주어짐 (배민이 매장에 지원하는 금액).
+  // 2026-04-22 고기왕김치찜 사장님 피드백 반영 (엑셀 J열 "플랫폼지원" 누락 버그 수정).
+  const platformInstantSubsidy = findDepth3(
+    s?.orderBrokerageItems,
+    'DISCOUNT_AMOUNT',
+    'WOOWABROS_ORDER_IMMEDIATE_DISCOUNT'
+  );
   const commissionFee = Math.abs(findCode(s?.orderBrokerageItems, 'ADVERTISE_FEE'));
   const deliveryCost = Math.abs(findCode(s?.deliveryItems, 'DELIVERY_SUPPLY_PRICE'));
   const deliveryTipDiscount = Math.abs(findCode(s?.deliveryItems, 'DEVLIERY_TIP_INSTANT_DISCOUNT'));
@@ -432,6 +449,8 @@ function mapOrder(item) {
     storeDiscount,
     ownerCouponDiscount: o.ownerChargeCouponDiscountAmount || 0,
     platformSubsidy: o.baeminChargeCouponDiscountAmount || 0,
+    // v3.10.0+: 배민 타임세일 분담분 — 노심 DB 의 baemin_platform_subsidy 컬럼으로 저장.
+    platformInstantSubsidy,
     // 각 수수료: 공급가 + VAT 이원
     commissionFee,
     commissionFeeVat,
