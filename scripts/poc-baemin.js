@@ -603,8 +603,17 @@ app.whenReady().then(async () => {
   mainWindow = new BrowserWindow({ width: 1200, height: 900, show: false });
   mainWindow.loadURL('about:blank');
 
+  // ── persist:baemin 파티션 ──
+  // 배민이 2026-04-20 경 로그인 페이지에 reCAPTCHA v2 를 도입. 자동 로그인 스크립트로는
+  // "로봇이 아닙니다" 체크박스를 통과할 수 없음. 대신 세션 쿠키(특히 "자동 로그인"
+  // 체크 시 발급되는 30일 쿠키)를 영속 파티션에 저장해 로그인 페이지 진입 빈도를
+  // 최소화. 앱 재시작/자동 업데이트 후에도 쿠키 유지됨.
   webView = new WebContentsView({
-    webPreferences: { contextIsolation: false, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: false,
+      nodeIntegration: false,
+      partition: 'persist:baemin',
+    },
   });
   mainWindow.contentView.addChildView(webView);
   const [w, h] = mainWindow.getContentSize();
@@ -639,24 +648,50 @@ app.whenReady().then(async () => {
 
   try {
     // ── 1) 로그인 ──
-    emit('status', { msg: '배민 로그인 중...' });
-    log('1) 배민 로그인...');
+    // 평상시 경로: persist:baemin 쿠키로 self.baemin.com 에 바로 인증됨 → 로그인 페이지
+    // 진입 없이 크롤링 진행. 로그인 페이지로 리다이렉트되면 세션 만료이며, reCAPTCHA
+    // 때문에 자동 로그인 불가 → 사장님 화면에 창 띄워서 수동 로그인 대기.
+    emit('status', { msg: '배민 세션 확인 중...' });
+    log('1) 배민 세션 확인 (persist:baemin 쿠키 기반)...');
     await navigateAndWait('https://self.baemin.com');
     await sleep(3000);
 
     let url = webView.webContents.getURL();
     if (isLoginUrl(url)) {
-      log(`   로그인 페이지: ${url.substring(0, 60)}`);
-      const loginResult = await webView.webContents.executeJavaScript(getAutoLoginScript(config.id, config.pw));
-      log(`   자동 로그인: ${JSON.stringify(loginResult)}`);
-      await waitForLoginRedirect(15000);
-      await sleep(2000);
-    }
+      log(`   세션 만료 감지 — 수동 로그인 대기 (180초)`);
+      log(`   로그인 페이지: ${url.substring(0, 80)}`);
+      emit('status', { msg: '배민 세션 만료 — 로그인 창에서 "자동 로그인" 체크 후 로그인해 주세요' });
 
-    url = webView.webContents.getURL();
-    if (isLoginUrl(url)) {
-      emit('error', { error: '배민 로그인 실패' });
-      throw new Error('배민 로그인 실패');
+      // "자동 로그인" 체크박스만 자동 체크 (reCAPTCHA + 비번 + 버튼은 사장님).
+      // 30일 쿠키(cookie30d) 발급받아 다음 회부터 로그인 페이지 진입 없이 크롤링.
+      await webView.webContents.executeJavaScript(`(function() {
+        const labels = document.querySelectorAll('label, span, div');
+        for (const label of labels) {
+          const text = (label.textContent || '').trim();
+          if (text === '자동 로그인') {
+            const parent = label.closest('label') || label.parentElement;
+            const checkbox = parent?.querySelector('input[type="checkbox"]');
+            if (checkbox && !checkbox.checked) { checkbox.click(); return { checked: true }; }
+          }
+        }
+        return { checked: false };
+      })()`).catch(() => {});
+
+      mainWindow.show();
+      mainWindow.focus();
+
+      await waitForLoginRedirect(180000);
+      await sleep(2000);
+
+      url = webView.webContents.getURL();
+      if (isLoginUrl(url)) {
+        mainWindow.hide();
+        emit('error', { error: '배민 세션 만료 — 3분 내 수동 로그인 안됨. 다음 스케줄에 재시도.' });
+        throw new Error('배민 세션 만료 timeout');
+      }
+
+      mainWindow.hide();
+      log('   수동 로그인 성공 — 세션 쿠키 저장됨 (이후 30일 자동)');
     }
     log('   -> 로그인 완료');
 
