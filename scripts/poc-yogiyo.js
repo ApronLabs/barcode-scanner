@@ -474,21 +474,18 @@ function getBackfillDateFilterScript(startDate, endDate) {
 }
 
 // ── DB SalesOrder 매핑 ──
-// v3.5.4: deliveryCost 버그 수정 + 필드명 정리
+// v3.11.0: 사장님 요청(2026-04-24) — 매장부담 할인 3종 분리
+// 2024-06 정산내역 기준 요기요 매장부담 할인은 4가지: C-3 요타임딜할인 / C-4 쿠폰할인 /
+// C-5 프로모션 / C-6 할인랭킹. 이전 버전은 이들을 sellerDiscount 한 덩어리로 합산만 했음.
+// 노심 엑셀/대시보드에서 할인 종류별 분리 표시가 필요해 3개 필드 별도 수집.
 //
-// 변경 사항:
-// 1. deliveryCost — 기존 `s.delivery_fee || findItem('배달')` 은 settlement_items의
-//    "배달요금"(매장 수령액)까지 매장 부담 배달비로 잘못 집계했음.
-//    → `findItem('배달대행')` 으로 교체. 없으면 0.
+// 동시 픽스: '요타임딜할인'(매장부담) 과 '요타임딜 이용료'(광고비) 가 item_title 구분이
+// '할인' vs '이용료' 서픽스라서, 기존 sumFind('요타임딜') 가 양쪽 다 매칭하는 잠재 버그 존재.
+// → 광고비 매칭에 '이용료' 접미사 명시, 할인 매칭에 '할인' 접미사 명시해 분리.
 //
-// 2. 필드 분리 + 이름 명확화:
-//    - sellerDiscount (사장님 부담 할인) — settlement_items에서 "사장님 부담 / 타임 / 프로모션 / 쿠폰"
-//    - platformSubsidy (요기요 보전 할인, 매장 입금 +) — yogiyo_discount_amount
-//    - adCost (광고 상품 이용 대금) — 추천광고 + 요타임딜
-//
-// 3. 레거시 필드는 호환성 위해 유지:
-//    - storeDiscount (기존 이름; 값은 sellerDiscount와 동일하게 제공 → 노심 route pickSellerDiscount로 수용)
-//    - adFee (기존 이름; adCost와 동일값)
+// v3.5.4 이전 히스토리 (참조용):
+//   - deliveryCost 버그 fix: findItem('배달') → findItem('배달대행') (배달요금 오분류 방지)
+//   - sellerDiscount / platformSubsidy / adCost 필드 분리
 function mapToSalesOrder(order, settlementMap, storeName, storeId) {
   const s = settlementMap[order.order_number] || {};
   const si = s.settlement_info || {};
@@ -508,10 +505,20 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
   const payMap = { ONLINE: '온라인결제', OFFLINE_CARD: '만나서카드', OFFLINE_CASH: '만나서현금' };
   const channelMap = { VD: '배달', OD: '자체배달', TAKEOUT: '포장' };
 
-  // 새 이름 (v3.5.4)
-  const sellerDiscount = sumFind('사장님', '타임 할인', '프로모션', '쿠폰 할인');
+  // 매장부담 할인 3종 분리 (v3.11.0, 사장님 요청 2026-04-24)
+  const rankingDiscount = findItem('할인랭킹');
+  const couponDiscount = findItem('쿠폰 할인');
+  // '요타임딜할인' 및 공백 있는 '타임 할인' 둘 다 매칭 — 매장별 표기 변형 흡수.
+  // '요타임딜 이용료'는 '이용료' 서픽스 있어 매칭 제외됨.
+  const timeDealDiscount = sumFind('요타임딜할인', '타임 할인');
+  // 그 외 매장부담 할인 (사장님 자체할인, 프로모션, 배달료 할인)
+  const otherSellerDiscount = sumFind('사장님', '프로모션', '배달료 할인');
+
+  // legacy sellerDiscount (노심 route `pickSellerDiscount` 호환) = 매장부담 할인 전체 합
+  const sellerDiscount = rankingDiscount + couponDiscount + timeDealDiscount + otherSellerDiscount;
   const platformSubsidy = Math.abs(si.yogiyo_discount_amount || 0);
-  const adCost = sumFind('추천광고', '요타임딜');
+  // 광고비: '이용료' 서픽스 명시해 '요타임딜할인'(매장부담)과 분리
+  const adCost = sumFind('추천광고 이용료', '요타임딜 이용료');
   // ★ 버그 fix: 배달대행료만 매칭, 없으면 0
   const deliveryCost = findItem('배달대행');
 
@@ -540,6 +547,10 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
     //   노심 route는 이미 platformSubsidy/sellerDiscount/adCost 새 이름을 수신하므로
     //   레거시 필드 없어도 정상 동작.
     sellerDiscount,
+    // v3.11.0 신규 — 매장부담 할인 3종 분리 (노심에서 분리 저장/표시)
+    rankingDiscount,
+    couponDiscount,
+    timeDealDiscount,
     platformSubsidy,
     adCost,
     deliveryCost,

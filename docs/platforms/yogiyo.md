@@ -68,9 +68,13 @@
 | 중개이용료 | `settlement_items[item_title LIKE '주문중개%'].item_amount` | `commissionFee` | `commission_fee` |
 | 결제수수료 | `settlement_items[LIKE '외부결제%']` | `pgFee` | `pg_fee` |
 | 배달대행료 | `settlement_items[LIKE '배달대행%']` | `deliveryCost` | `delivery_fee` |
-| 사장님 부담 할인 | `settlement_items[LIKE '사장님%' OR '타임 할인%' OR '프로모션%' OR '쿠폰 할인%']` 합산 | `sellerDiscount` | `store_discount` |
+| 매장부담 할인 (통합, legacy) | 아래 3종 + 기타 합산 | `sellerDiscount` | `store_discount` |
+| └ 할인랭킹 (레스토랑부담, v3.11.0+) | `settlement_items[LIKE '할인랭킹%']` | `rankingDiscount` | `ranking_discount` |
+| └ 쿠폰할인 (레스토랑부담, v3.11.0+) | `settlement_items[LIKE '쿠폰 할인%']` | `couponDiscount` | `coupon_discount` |
+| └ 요타임딜할인 (매장 타임세일, v3.11.0+) | `settlement_items[LIKE '요타임딜할인%' OR '타임 할인%']` 합산 | `timeDealDiscount` | `time_deal_discount` |
+| └ 기타 (사장님 자체 / 프로모션 / 배달료 할인) | `settlement_items[LIKE '사장님%' OR '프로모션%' OR '배달료 할인%']` 합산 | sellerDiscount에만 포함 | store_discount에 포함 |
 | 요기요 보전 할인 | `Math.abs(settlement_info.yogiyo_discount_amount)` | `platformSubsidy` | `platform_subsidy` |
-| 광고비 | `settlement_items[LIKE '추천광고%' OR '요타임딜%']` 합산 | `adCost` | `ad_fee` |
+| 광고비 (v3.11.0+: '이용료' 명시) | `settlement_items[LIKE '추천광고 이용료%' OR '요타임딜 이용료%']` 합산 | `adCost` | `ad_fee` |
 | 부가세 (단일) | `settlement_items[LIKE '부가세%']` | `vat` | `vat` |
 | 정산금액 | `settlement_info.settlement_amount` | `settlementAmount` | `settlement_amount` |
 
