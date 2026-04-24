@@ -43,7 +43,7 @@
 |---|---|---|
 | 배민 | `settle.orderBrokerageItems[DISCOUNT_AMOUNT].amount` (절대값) | depth3 에 매장/배민 분리 (이미 net) |
 | 쿠팡이츠 | `orderSettlement.storePromotionAmount` | — |
-| 요기요 | `settlement_items` 합산 — 할인랭킹/쿠폰할인/요타임딜할인 3종은 v3.11.0+ 에서 별도 필드 (`rankingDiscount/couponDiscount/timeDealDiscount`). 나머지(사장님/프로모션/배달료)는 sellerDiscount 에만 포함 | 문자열 매칭 |
+| 요기요 | `settlement_items['가게부담 할인금액']` (매장 실부담). 쿠폰/요기패스X 분리는 v3.11.1+ 에서 `rawSettlement.discounts[].type` 으로 수집 (COUPON / YOGIPASSX*) | 문자열 매칭 + 배열 필터 |
 | 땡겨요 | 미제공 | — |
 
 ### 정산금액 (입금예정) 필드

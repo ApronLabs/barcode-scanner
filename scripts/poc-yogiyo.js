@@ -474,17 +474,27 @@ function getBackfillDateFilterScript(startDate, endDate) {
 }
 
 // ── DB SalesOrder 매핑 ──
-// v3.11.0: 사장님 요청(2026-04-24) — 매장부담 할인 3종 분리
-// 2024-06 정산내역 기준 요기요 매장부담 할인은 4가지: C-3 요타임딜할인 / C-4 쿠폰할인 /
-// C-5 프로모션 / C-6 할인랭킹. 이전 버전은 이들을 sellerDiscount 한 덩어리로 합산만 했음.
-// 노심 엑셀/대시보드에서 할인 종류별 분리 표시가 필요해 3개 필드 별도 수집.
+// v3.11.1 (2026-04-24 RDS 실데이터 검증 후 재설계):
 //
-// 동시 픽스: '요타임딜할인'(매장부담) 과 '요타임딜 이용료'(광고비) 가 item_title 구분이
-// '할인' vs '이용료' 서픽스라서, 기존 sumFind('요타임딜') 가 양쪽 다 매칭하는 잠재 버그 존재.
-// → 광고비 매칭에 '이용료' 접미사 명시, 할인 매칭에 '할인' 접미사 명시해 분리.
+// PR #42 (v3.11.0) 에서 추가했던 '할인랭킹'/'쿠폰 할인'/'요타임딜할인' 키워드는
+// 실제 요기요 API 응답과 전혀 매칭되지 않아 아래 두 가지 문제 발생:
+//   1. 매장부담 할인이 0 으로 저장 (회귀 — 이전 키워드도 못 잡아서 1년 가까이 버그 방치)
+//   2. 3종 분리 필드 (rankingDiscount/couponDiscount/timeDealDiscount) 모두 0
+//
+// RDS 실데이터 156건 조사(2026-04-24) 결과:
+//   - settlement_items 의 매장부담 할인은 "가게부담 할인금액" 단일 명칭으로만 내려옴
+//   - 2024-06 사장님 자료의 할인랭킹/쿠폰/요타임딜 3종 분리는 월별 정산 페이지 전용 집계
+//   - 주문별 할인 종류 구분은 rawSettlement.discounts[] 배열에서 type 필드로 가능
+//     └ COUPON / YOGIPASSX / YOGIPASSXN / YOGIPASSXT 4종만 존재
+//
+// 수정 방침:
+//   - sellerDiscount = findItem('가게부담') — 매장 실부담 (회귀 버그 fix)
+//   - couponDiscount = discounts[].filter(type='COUPON').sum — 주문별 쿠폰 합
+//   - platformPassDiscount (신규) = discounts[].filter(type='YOGIPASSX*').sum — 요기패스X 3종
+//   - rankingDiscount / timeDealDiscount 필드는 payload 에서 제거 (월별 크롤링 PR 에서 재도입)
 //
 // v3.5.4 이전 히스토리 (참조용):
-//   - deliveryCost 버그 fix: findItem('배달') → findItem('배달대행') (배달요금 오분류 방지)
+//   - deliveryCost 버그 fix: findItem('배달') → findItem('배달대행')
 //   - sellerDiscount / platformSubsidy / adCost 필드 분리
 function mapToSalesOrder(order, settlementMap, storeName, storeId) {
   const s = settlementMap[order.order_number] || {};
@@ -505,17 +515,18 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
   const payMap = { ONLINE: '온라인결제', OFFLINE_CARD: '만나서카드', OFFLINE_CASH: '만나서현금' };
   const channelMap = { VD: '배달', OD: '자체배달', TAKEOUT: '포장' };
 
-  // 매장부담 할인 3종 분리 (v3.11.0, 사장님 요청 2026-04-24)
-  const rankingDiscount = findItem('할인랭킹');
-  const couponDiscount = findItem('쿠폰 할인');
-  // '요타임딜할인' 및 공백 있는 '타임 할인' 둘 다 매칭 — 매장별 표기 변형 흡수.
-  // '요타임딜 이용료'는 '이용료' 서픽스 있어 매칭 제외됨.
-  const timeDealDiscount = sumFind('요타임딜할인', '타임 할인');
-  // 그 외 매장부담 할인 (사장님 자체할인, 프로모션, 배달료 할인)
-  const otherSellerDiscount = sumFind('사장님', '프로모션', '배달료 할인');
+  // 매장부담 할인 — "가게부담 할인금액" 단일 항목 (v3.11.1 회귀 버그 fix)
+  const sellerDiscount = findItem('가게부담');
 
-  // legacy sellerDiscount (노심 route `pickSellerDiscount` 호환) = 매장부담 할인 전체 합
-  const sellerDiscount = rankingDiscount + couponDiscount + timeDealDiscount + otherSellerDiscount;
+  // 주문별 할인 종류 분리 (rawSettlement.discounts[] 배열, v3.11.1 신규)
+  const orderDiscounts = Array.isArray(s.discounts) ? s.discounts : [];
+  const couponDiscount = orderDiscounts
+    .filter(d => d && d.type === 'COUPON')
+    .reduce((sum, d) => sum + Math.abs(Number(d.price) || 0), 0);
+  const platformPassDiscount = orderDiscounts
+    .filter(d => d && typeof d.type === 'string' && d.type.startsWith('YOGIPASSX'))
+    .reduce((sum, d) => sum + Math.abs(Number(d.price) || 0), 0);
+
   const platformSubsidy = Math.abs(si.yogiyo_discount_amount || 0);
   // 광고비: '이용료' 서픽스 명시해 '요타임딜할인'(매장부담)과 분리
   const adCost = sumFind('추천광고 이용료', '요타임딜 이용료');
@@ -547,10 +558,9 @@ function mapToSalesOrder(order, settlementMap, storeName, storeId) {
     //   노심 route는 이미 platformSubsidy/sellerDiscount/adCost 새 이름을 수신하므로
     //   레거시 필드 없어도 정상 동작.
     sellerDiscount,
-    // v3.11.0 신규 — 매장부담 할인 3종 분리 (노심에서 분리 저장/표시)
-    rankingDiscount,
+    // v3.11.1 — rawSettlement.discounts[] 기반 타입별 분리 (RDS 실데이터 검증)
     couponDiscount,
-    timeDealDiscount,
+    platformPassDiscount,
     platformSubsidy,
     adCost,
     deliveryCost,
